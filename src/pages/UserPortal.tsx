@@ -70,7 +70,6 @@ export const UserPortal: React.FC = () => {
     fetchEvents();
   }, []);
 
-  // Filter and Group events by Year & Month using the events state
   const groupedEvents = useMemo(() => {
     const filtered = events.filter((ev) => 
       ev.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -79,7 +78,6 @@ export const UserPortal: React.FC = () => {
 
     const grouped: GroupedEvents = {};
     filtered.forEach((item) => {
-      // Default grouping year/month
       const year = '2026';
       const month = 'Conferences & Conventions';
 
@@ -144,20 +142,54 @@ export const UserPortal: React.FC = () => {
     }
   };
 
+  // Convert external image to Base64 to defeat CORS issues completely
+  const getBase64ImageFromUrl = async (imageUrl: string): Promise<string> => {
+    const res = await fetch(imageUrl);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
   const handleDownloadPDF = async () => {
     const printArea = document.getElementById('certificate-print-area');
-    if (!printArea || !matchedCert) return;
+    if (!printArea || !matchedCert || !selectedEvent) {
+      alert('Certificate render area not found.');
+      return;
+    }
 
     setDownloading(true);
+    const originalBg = printArea.style.backgroundImage;
+
     try {
+      // 1. Convert template background to local base64 on-the-fly
+      if (selectedEvent.templateUrl) {
+        try {
+          const base64Bg = await getBase64ImageFromUrl(selectedEvent.templateUrl);
+          printArea.style.backgroundImage = `url("${base64Bg}")`;
+        } catch (e) {
+          console.warn('Direct fetch failed, falling back to html2canvas proxy', e);
+        }
+      }
+
+      await document.fonts.ready;
+
+      // 2. Render canvas securely
       const canvas = await html2canvas(printArea, {
         scale: 2,
         useCORS: true,
         allowTaint: true,
         backgroundColor: '#ffffff',
+        logging: false,
       });
 
-      const imgData = canvas.toDataURL('image/png');
+      // 3. Reset background back to normal
+      printArea.style.backgroundImage = originalBg;
+
+      const imgData = canvas.toDataURL('image/png', 1.0);
       const pdf = new jsPDF({
         orientation: 'landscape',
         unit: 'px',
@@ -165,12 +197,15 @@ export const UserPortal: React.FC = () => {
       });
 
       pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-      pdf.save(`${matchedCert.certificate_no.replace(/\//g, '_')}_Certificate.pdf`);
-    } catch (err) {
-      alert('Download failed. Please try again.');
-      console.error(err);
+      const fileName = `${matchedCert.certificate_no.replace(/[^a-zA-Z0-9_-]/g, '_')}_Official.pdf`;
+      pdf.save(fileName);
+    } catch (err: any) {
+      printArea.style.backgroundImage = originalBg;
+      console.error('Download Error:', err);
+      alert('Download failed: ' + (err?.message || 'CORS Security error'));
+    } finally {
+      setDownloading(false);
     }
-    setDownloading(false);
   };
 
   return (
@@ -206,7 +241,6 @@ export const UserPortal: React.FC = () => {
                 <p className="text-xs text-gray-500 mt-0.5">Explore scheduled conferences and workshops categorized by Year and Month</p>
               </div>
 
-              {/* Event Filter using the events array */}
               <div className="relative max-w-xs w-full">
                 <Search size={15} className="absolute left-3 top-3 text-gray-400" />
                 <input
@@ -357,7 +391,7 @@ export const UserPortal: React.FC = () => {
                       className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow transition disabled:opacity-60"
                     >
                       {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                      <span>{downloading ? 'Generating PDF...' : 'Download Official PDF'}</span>
+                      <span>{downloading ? 'Preparing High-Res PDF...' : 'Download Official PDF'}</span>
                     </button>
                   </div>
 
