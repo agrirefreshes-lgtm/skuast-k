@@ -161,32 +161,47 @@ export const UserPortal: React.FC = () => {
   const handleDownloadPDF = async () => {
     const printArea = document.getElementById('certificate-print-area') as HTMLDivElement | null;
     if (!printArea || !matchedCert || !selectedEvent) {
-      alert('Certificate area ready nahi hai. Kripya page refresh karke dobara try karein.');
+      alert('Certificate area ready nahi hai. Kripya page refresh karke dobara check karein.');
       return;
     }
 
     setDownloading(true);
-    const originalBg = printArea.style.backgroundImage;
 
     try {
-      // 1. Convert template URL to safe local base64 to bypass CORS
+      // 1. Offscreen High-Res Canvas Dimensions (1920x1357 for exact A4 Ratio 1.414)
+      const TARGET_WIDTH = 1920;
+      const TARGET_HEIGHT = 1357;
+
+      // 2. Safe Base64 Background convert taaki CORS canvas taint na ho
+      let safeBgUrl = selectedEvent.templateUrl;
       if (selectedEvent.templateUrl) {
-        const safeBase64 = await toDataURL(selectedEvent.templateUrl);
-        printArea.style.backgroundImage = `url("${safeBase64}")`;
+        safeBgUrl = await toDataURL(selectedEvent.templateUrl);
       }
 
       await document.fonts.ready;
-      await new Promise((res) => setTimeout(res, 250));
+      await new Promise((res) => setTimeout(res, 300));
 
-      // 2. Capture with onclone hook to clean unsupported oklch modern colors
+      // 3. Screen-Size Independent Render (Phone ho ya Desktop, identical capture hoga)
       const canvas = await html2canvas(printArea, {
-        scale: 2,
+        scale: 1,
+        width: TARGET_WIDTH,
+        height: TARGET_HEIGHT,
         useCORS: true,
         allowTaint: false,
         logging: false,
         backgroundColor: '#ffffff',
         imageTimeout: 20000,
-        onclone: (clonedDoc) => {
+        onclone: (clonedDoc, clonedEl) => {
+          // Offscreen cloned element ko full desktop A4 dimensions par lock karein
+          clonedEl.style.width = `${TARGET_WIDTH}px`;
+          clonedEl.style.height = `${TARGET_HEIGHT}px`;
+          clonedEl.style.maxWidth = 'none';
+          clonedEl.style.maxHeight = 'none';
+          clonedEl.style.transform = 'none';
+          clonedEl.style.backgroundImage = `url("${safeBgUrl}")`;
+          clonedEl.style.backgroundSize = '100% 100%';
+
+          // Modern oklch color parsing crash protection
           const elements = clonedDoc.querySelectorAll('*');
           elements.forEach((el) => {
             const htmlEl = el as HTMLElement;
@@ -207,23 +222,20 @@ export const UserPortal: React.FC = () => {
 
       const imgData = canvas.toDataURL('image/png', 1.0);
 
-      // 3. Generate Clean Landscape PDF
+      // 4. Standard A4 Landscape PDF Output (297mm x 210mm)
       const pdf = new jsPDF({
         orientation: 'landscape',
-        unit: 'px',
-        format: [canvas.width, canvas.height],
+        unit: 'mm',
+        format: 'a4',
       });
 
-      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.addImage(imgData, 'PNG', 0, 0, 297, 210, undefined, 'FAST');
       const cleanFileName = (matchedCert.certificate_no || 'Certificate').replace(/[^a-zA-Z0-9_-]/g, '_');
       pdf.save(`${cleanFileName}.pdf`);
     } catch (err: any) {
       console.error('PDF Generation Error:', err);
-      alert('Certificate download fail ho gaya: ' + (err.message || 'Color parsing error'));
+      alert('Certificate download fail ho gaya: ' + (err.message || 'Color parsing or rendering error'));
     } finally {
-      if (printArea) {
-        printArea.style.backgroundImage = originalBg;
-      }
       setDownloading(false);
     }
   };
@@ -392,16 +404,22 @@ export const UserPortal: React.FC = () => {
                   </button>
                 </form>
               ) : (
+                /* Authenticated State: Verification Banner, Live Canvas & Download Trigger */
                 <div className="space-y-6">
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
                     <div className="flex items-center gap-3">
-                      <UserCheck size={28} className="text-emerald-700" />
+                      <div className="h-10 w-10 rounded-xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 shrink-0">
+                        <UserCheck size={24} />
+                      </div>
                       <div>
-                        <h4 className="text-xs font-bold text-emerald-950">
-                          Credential Verified: {matchedCert.certificate_no}
+                        <span className="text-[10px] font-extrabold uppercase bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded tracking-wide">
+                          Verified Candidate
+                        </span>
+                        <h4 className="text-xs sm:text-sm font-black text-emerald-950 mt-0.5">
+                          Certificate No: <span className="font-mono">{matchedCert.certificate_no}</span>
                         </h4>
                         <p className="text-[11px] text-emerald-800">
-                          Live certificate generated from official SKUAST-K ledger.
+                          Digital Record loaded from official SKUAST-K Cloud Ledger.
                         </p>
                       </div>
                     </div>
@@ -409,14 +427,15 @@ export const UserPortal: React.FC = () => {
                     <button
                       onClick={handleDownloadPDF}
                       disabled={downloading}
-                      className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow transition disabled:opacity-60"
+                      className="w-full sm:w-auto px-6 py-3 bg-[#0f5132] hover:bg-emerald-900 active:bg-emerald-950 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-md transition disabled:opacity-60 shrink-0"
                     >
-                      {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                      <span>{downloading ? 'Generating PDF...' : 'Download Official PDF'}</span>
+                      {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                      <span>{downloading ? 'Rendering HD PDF...' : 'Download Official PDF'}</span>
                     </button>
                   </div>
 
-                  <div className="bg-slate-50 p-3 md:p-6 rounded-2xl border border-gray-200">
+                  {/* Visual Render Canvas */}
+                  <div className="bg-slate-50 p-2 sm:p-4 md:p-6 rounded-2xl border border-gray-200 overflow-hidden">
                     <CertificateCanvas
                       event={selectedEvent}
                       cert={matchedCert}
