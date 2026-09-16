@@ -5,7 +5,23 @@ import { ExcelUploader } from '../components/ExcelUploader';
 import { CertificateCanvas } from '../components/CertificateCanvas';
 import { AdminLogin } from '../components/AdminLogin';
 import { supabase } from '../lib/supabaseClient';
-import { FolderPlus, Download, FileSpreadsheet, ImagePlus, Trash2, Eye, EyeOff, Link as LinkIcon, Check, ShieldCheck, LogOut, Loader2 } from 'lucide-react';
+import { 
+  FolderPlus, 
+  Download, 
+  FileSpreadsheet, 
+  ImagePlus, 
+  Trash2, 
+  Eye, 
+  EyeOff, 
+  Link as LinkIcon, 
+  Check, 
+  ShieldCheck, 
+  LogOut, 
+  Loader2, 
+  ChevronLeft, 
+  ChevronRight, 
+  UserCheck 
+} from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -48,13 +64,19 @@ export const AdminDashboard: React.FC = () => {
       }));
       setEvents(formatted);
       setSelectedEventId(formatted[0].id);
+    } else {
+      setEvents([]);
+      setSelectedEventId('');
     }
     setLoading(false);
   };
 
   // 2. Fetch Certificates for Current Event
   const loadCertificates = async (eventId: string) => {
-    if (!eventId) return;
+    if (!eventId) {
+      setCertificates([]);
+      return;
+    }
     const { data, error } = await supabase
       .from('certificates')
       .select('*')
@@ -95,6 +117,12 @@ export const AdminDashboard: React.FC = () => {
   const handleLogout = () => {
     sessionStorage.removeItem('skuastk_admin_auth');
     setIsAuthenticated(false);
+  };
+
+  // Helper to generate exact GitHub Pages compatible URL
+  const getPublicEventUrl = (event: EventItem) => {
+    const baseUrl = window.location.href.split('#')[0].replace(/\/+$/, '');
+    return `${baseUrl}/#/event/${event.slug || event.id}`;
   };
 
   // Create Event in Supabase
@@ -140,6 +168,32 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  // Delete Entire Event
+  const handleDeleteEvent = async (eventId: string, eventName: string) => {
+    const confirmDelete = confirm(`Kya aap sach me "${eventName}" event ko delete karna chahte hain?\nIs event ke saare certificates aur uploaded data permanent delete ho jayenge!`);
+    if (!confirmDelete) return;
+
+    // 1. Delete associated certificates from Supabase
+    await supabase.from('certificates').delete().eq('event_id', eventId);
+
+    // 2. Delete event record
+    const { error } = await supabase.from('events').delete().eq('id', eventId);
+    if (error) {
+      alert('Event delete failed: ' + error.message);
+      return;
+    }
+
+    const remaining = events.filter((e) => e.id !== eventId);
+    setEvents(remaining);
+    if (remaining.length > 0) {
+      setSelectedEventId(remaining[0].id);
+    } else {
+      setSelectedEventId('');
+      setCertificates([]);
+    }
+    alert(`Event "${eventName}" successfully delete ho gaya!`);
+  };
+
   // Upload Template Image directly to Supabase Storage Bucket
   const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -165,7 +219,6 @@ export const AdminDashboard: React.FC = () => {
 
     const publicUrl = publicUrlData.publicUrl;
 
-    // Update in Supabase
     await supabase.from('events').update({ template_url: publicUrl }).eq('id', currentEvent.id);
 
     const updated = { ...currentEvent, templateUrl: publicUrl };
@@ -254,7 +307,6 @@ export const AdminDashboard: React.FC = () => {
       batches: [...currentEvent.batches, newBatch],
     };
 
-    // Bulk save in Supabase
     const { error: certError } = await supabase.from('certificates').insert(dbCertsToInsert);
     if (certError) {
       alert('Certificates upload error: ' + certError.message);
@@ -304,7 +356,8 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const copyShareLink = () => {
-    const link = `${window.location.origin}/event/${currentEvent.slug || currentEvent.id}`;
+    if (!currentEvent) return;
+    const link = getPublicEventUrl(currentEvent);
     navigator.clipboard.writeText(link);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -345,18 +398,39 @@ export const AdminDashboard: React.FC = () => {
           </div>
         ) : (
           <>
-            {/* Event Tabs */}
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            {/* Event Tabs with Delete Button */}
+            <div className="flex gap-2 overflow-x-auto pb-1 items-center">
               {events.map((ev) => (
-                <button
+                <div
                   key={ev.id}
-                  onClick={() => setSelectedEventId(ev.id)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
-                    selectedEventId === ev.id ? 'bg-slate-900 text-white shadow' : 'bg-white text-slate-700 hover:bg-slate-200'
+                  className={`flex items-center rounded-xl text-xs font-bold transition whitespace-nowrap shadow-sm border ${
+                    selectedEventId === ev.id 
+                      ? 'bg-slate-900 text-white border-slate-900' 
+                      : 'bg-white text-slate-700 hover:bg-slate-100 border-gray-200'
                   }`}
                 >
-                  {ev.name} ({ev.certPrefix})
-                </button>
+                  <button
+                    onClick={() => setSelectedEventId(ev.id)}
+                    className="px-3.5 py-2 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span>{ev.name}</span>
+                    <span className="text-[10px] opacity-70">({ev.certPrefix})</span>
+                  </button>
+                  
+                  {/* Event Delete Icon */}
+                  <button
+                    title={`Delete Event ${ev.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteEvent(ev.id, ev.name);
+                    }}
+                    className={`px-2 py-2 hover:text-rose-500 transition cursor-pointer border-l ${
+                      selectedEventId === ev.id ? 'border-slate-800 text-slate-400' : 'border-gray-200 text-gray-400'
+                    }`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               ))}
             </div>
 
@@ -366,8 +440,8 @@ export const AdminDashboard: React.FC = () => {
                 <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
                   <LinkIcon size={14} /> Public Download Link (Universal)
                 </span>
-                <span className="text-xs font-mono font-semibold text-slate-800 mt-1 block">
-                  {window.location.origin}/event/{currentEvent.slug || currentEvent.id}
+                <span className="text-xs font-mono font-semibold text-slate-800 mt-1 block select-all">
+                  {getPublicEventUrl(currentEvent)}
                 </span>
               </div>
               <button
@@ -487,10 +561,45 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Live Canvas Preview */}
-            {activeCert && (
+            {/* Visual Canvas Preview + Participant Data Scroller */}
+            {certificates.length > 0 && activeCert && (
               <div className="bg-white p-5 rounded-2xl border border-gray-200 space-y-4">
-                <h3 className="text-sm font-bold text-gray-800">Visual Coordinate Designer</h3>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-800">Visual Coordinate Designer</h3>
+                    <p className="text-[11px] text-gray-500">Coordinate drag karein ya record switch karke template check karein</p>
+                  </div>
+
+                  {/* Participant Record Scroller / Navigator */}
+                  <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                    <UserCheck size={15} className="text-emerald-700" />
+                    <span className="text-xs font-semibold text-slate-700 font-mono">
+                      {activeCert.certificate_no}
+                    </span>
+                    <span className="text-[11px] text-slate-500 bg-white px-2 py-0.5 rounded-md border font-medium">
+                      {activeCertIndex + 1} of {certificates.length}
+                    </span>
+                    <div className="flex items-center gap-1 ml-1">
+                      <button
+                        onClick={() => setActiveCertIndex((prev) => Math.max(0, prev - 1))}
+                        disabled={activeCertIndex === 0}
+                        className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
+                        title="Previous Candidate"
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <button
+                        onClick={() => setActiveCertIndex((prev) => Math.min(certificates.length - 1, prev + 1))}
+                        disabled={activeCertIndex === certificates.length - 1}
+                        className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
+                        title="Next Candidate"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <CertificateCanvas
                   event={currentEvent}
                   cert={activeCert}
