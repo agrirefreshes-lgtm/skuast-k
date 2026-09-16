@@ -70,6 +70,7 @@ export const UserPortal: React.FC = () => {
     fetchEvents();
   }, []);
 
+  // Filter and Group events by Year & Month using the events state
   const groupedEvents = useMemo(() => {
     const filtered = events.filter((ev) => 
       ev.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -142,22 +143,25 @@ export const UserPortal: React.FC = () => {
     }
   };
 
-  // Convert external image to Base64 to defeat CORS issues completely
-  const getBase64ImageFromUrl = async (imageUrl: string): Promise<string> => {
-    const res = await fetch(imageUrl);
-    const blob = await res.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+  // Helper: Image ko base64 data URL me convert karega taaki CORS crash na ho
+  const toDataURL = async (url: string): Promise<string> => {
+    try {
+      const response = await fetch(url, { cache: 'no-cache' });
+      const blob = await response.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return url;
+    }
   };
 
   const handleDownloadPDF = async () => {
-    const printArea = document.getElementById('certificate-print-area');
+    const printArea = document.getElementById('certificate-print-area') as HTMLDivElement | null;
     if (!printArea || !matchedCert || !selectedEvent) {
-      alert('Certificate render area not found.');
+      alert('Certificate area ready nahi hai. Kripya page refresh karke dobara try karein.');
       return;
     }
 
@@ -165,31 +169,45 @@ export const UserPortal: React.FC = () => {
     const originalBg = printArea.style.backgroundImage;
 
     try {
-      // 1. Convert template background to local base64 on-the-fly
+      // 1. Convert template URL to safe local base64 to bypass CORS
       if (selectedEvent.templateUrl) {
-        try {
-          const base64Bg = await getBase64ImageFromUrl(selectedEvent.templateUrl);
-          printArea.style.backgroundImage = `url("${base64Bg}")`;
-        } catch (e) {
-          console.warn('Direct fetch failed, falling back to html2canvas proxy', e);
-        }
+        const safeBase64 = await toDataURL(selectedEvent.templateUrl);
+        printArea.style.backgroundImage = `url("${safeBase64}")`;
       }
 
       await document.fonts.ready;
+      await new Promise((res) => setTimeout(res, 250));
 
-      // 2. Render canvas securely
+      // 2. Capture with onclone hook to clean unsupported oklch modern colors
       const canvas = await html2canvas(printArea, {
         scale: 2,
         useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
+        allowTaint: false,
         logging: false,
+        backgroundColor: '#ffffff',
+        imageTimeout: 20000,
+        onclone: (clonedDoc) => {
+          const elements = clonedDoc.querySelectorAll('*');
+          elements.forEach((el) => {
+            const htmlEl = el as HTMLElement;
+            const style = window.getComputedStyle(htmlEl);
+            
+            if (style.color && style.color.includes('oklch')) {
+              htmlEl.style.color = '#111827';
+            }
+            if (style.backgroundColor && style.backgroundColor.includes('oklch')) {
+              htmlEl.style.backgroundColor = 'transparent';
+            }
+            if (style.borderColor && style.borderColor.includes('oklch')) {
+              htmlEl.style.borderColor = '#e5e7eb';
+            }
+          });
+        }
       });
 
-      // 3. Reset background back to normal
-      printArea.style.backgroundImage = originalBg;
-
       const imgData = canvas.toDataURL('image/png', 1.0);
+
+      // 3. Generate Clean Landscape PDF
       const pdf = new jsPDF({
         orientation: 'landscape',
         unit: 'px',
@@ -197,13 +215,15 @@ export const UserPortal: React.FC = () => {
       });
 
       pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-      const fileName = `${matchedCert.certificate_no.replace(/[^a-zA-Z0-9_-]/g, '_')}_Official.pdf`;
-      pdf.save(fileName);
+      const cleanFileName = (matchedCert.certificate_no || 'Certificate').replace(/[^a-zA-Z0-9_-]/g, '_');
+      pdf.save(`${cleanFileName}.pdf`);
     } catch (err: any) {
-      printArea.style.backgroundImage = originalBg;
-      console.error('Download Error:', err);
-      alert('Download failed: ' + (err?.message || 'CORS Security error'));
+      console.error('PDF Generation Error:', err);
+      alert('Certificate download fail ho gaya: ' + (err.message || 'Color parsing error'));
     } finally {
+      if (printArea) {
+        printArea.style.backgroundImage = originalBg;
+      }
       setDownloading(false);
     }
   };
@@ -241,6 +261,7 @@ export const UserPortal: React.FC = () => {
                 <p className="text-xs text-gray-500 mt-0.5">Explore scheduled conferences and workshops categorized by Year and Month</p>
               </div>
 
+              {/* Event Filter using the events array */}
               <div className="relative max-w-xs w-full">
                 <Search size={15} className="absolute left-3 top-3 text-gray-400" />
                 <input
@@ -391,7 +412,7 @@ export const UserPortal: React.FC = () => {
                       className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow transition disabled:opacity-60"
                     >
                       {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                      <span>{downloading ? 'Preparing High-Res PDF...' : 'Download Official PDF'}</span>
+                      <span>{downloading ? 'Generating PDF...' : 'Download Official PDF'}</span>
                     </button>
                   </div>
 
