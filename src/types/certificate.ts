@@ -5,11 +5,15 @@ export interface DynamicFieldDef {
   y: number;
   fontSize: number;
   color: string;
+  backgroundColor?: string;
   fontFamily: string;
   isBold: boolean;
+  isItalic?: boolean;
+  isUppercase?: boolean;
   align: 'center' | 'left' | 'right';
   maxWidth: number;
   lineHeight: number;
+  maxLines?: number;
   visible: boolean;
 }
 
@@ -50,8 +54,8 @@ export interface IssuedCertificate {
   certificate_no: string;
   event_id: string;
   event_name: string;
-  batchId: string;
+  batchId?: string;
   issue_date: string;
-  status: 'verified' | 'cancelled';
+  status: 'verified' | 'cancelled' | string;
   data: Record<string, string>;
 }
