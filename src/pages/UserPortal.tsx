@@ -143,7 +143,7 @@ export const UserPortal: React.FC = () => {
     }
   };
 
-  // Helper: Image ko base64 data URL me convert karega taaki CORS crash na ho
+  // Helper: Image URL to Base64 to bypass CORS issues cleanly
   const toDataURL = async (url: string): Promise<string> => {
     try {
       const response = await fetch(url, { cache: 'no-cache' });
@@ -168,57 +168,33 @@ export const UserPortal: React.FC = () => {
     setDownloading(true);
 
     try {
-      // 1. Offscreen High-Res Canvas Dimensions (1920x1357 for exact A4 Ratio 1.414)
-      const TARGET_WIDTH = 1920;
-      const TARGET_HEIGHT = 1357;
-
-      // 2. Safe Base64 Background convert taaki CORS canvas taint na ho
-      let safeBgUrl = selectedEvent.templateUrl;
-      if (selectedEvent.templateUrl) {
-        safeBgUrl = await toDataURL(selectedEvent.templateUrl);
-      }
-
       await document.fonts.ready;
-      await new Promise((res) => setTimeout(res, 300));
+      await new Promise((res) => setTimeout(res, 200));
 
-      // 3. Screen-Size Independent Render (Phone ho ya Desktop, identical capture hoga)
-      const canvas = await html2canvas(printArea, {
-        scale: 1,
-        width: TARGET_WIDTH,
-        height: TARGET_HEIGHT,
+      // 1. Capture text & QR layer as 100% Transparent Overlay (No CSS background bleed or shade)
+      const overlayCanvas = await html2canvas(printArea, {
+        scale: 2,
         useCORS: true,
         allowTaint: false,
         logging: false,
-        backgroundColor: '#ffffff',
-        imageTimeout: 20000,
-        onclone: (clonedDoc, clonedEl) => {
-          // Offscreen cloned element ko full desktop A4 dimensions par lock karein
-          clonedEl.style.width = `${TARGET_WIDTH}px`;
-          clonedEl.style.height = `${TARGET_HEIGHT}px`;
-          clonedEl.style.maxWidth = 'none';
-          clonedEl.style.maxHeight = 'none';
-          clonedEl.style.transform = 'none';
-          clonedEl.style.backgroundImage = `url("${safeBgUrl}")`;
-          clonedEl.style.backgroundSize = '100% 100%';
+        backgroundColor: null, // STRICTLY TRANSPARENT - Eliminates any grey box/backdrop
+        onclone: (_, clonedEl) => {
+          // Remove background image and colors from clone completely
+          clonedEl.style.backgroundImage = 'none';
           clonedEl.style.backgroundColor = 'transparent';
+          clonedEl.style.boxShadow = 'none';
 
-          // Strictly remove all nested container backgrounds (eliminates grey shade band)
-          const allNestedDivs = clonedEl.querySelectorAll('div');
-          allNestedDivs.forEach((d) => {
-            const el = d as HTMLElement;
-            // Agar QR code ka white wrapper na ho toh sab transparent karo
-            if (!el.classList.contains('bg-white')) {
-              el.style.backgroundColor = 'transparent';
-            }
-            el.style.boxShadow = 'none';
-          });
-
-          // Modern oklch color parsing crash protection
-          const elements = clonedDoc.querySelectorAll('*');
-          elements.forEach((el) => {
+          const allElements = clonedEl.querySelectorAll('*');
+          allElements.forEach((el) => {
             const htmlEl = el as HTMLElement;
+            // QR code ke white container ko chhod kar baaki sab clean transparent
+            if (!htmlEl.classList.contains('bg-white')) {
+              htmlEl.style.backgroundColor = 'transparent';
+            }
+            htmlEl.style.boxShadow = 'none';
+
+            // Modern oklch color parsing crash protection
             const style = window.getComputedStyle(htmlEl);
-            
             if (style.color && style.color.includes('oklch')) {
               htmlEl.style.color = '#111827';
             }
@@ -229,16 +205,29 @@ export const UserPortal: React.FC = () => {
         }
       });
 
-      const imgData = canvas.toDataURL('image/png', 1.0);
+      const overlayImgData = overlayCanvas.toDataURL('image/png');
 
-      // 4. Standard A4 Landscape PDF Output (297mm x 210mm)
+      // 2. Load the original template image cleanly as Base64
+      let bgImgData = selectedEvent.templateUrl;
+      try {
+        bgImgData = await toDataURL(selectedEvent.templateUrl);
+      } catch (e) {
+        console.warn('Fallback to direct url', e);
+      }
+
+      // 3. Construct clean A4 PDF (Layer 1: Pure Original Template, Layer 2: Text/QR Overlay)
       const pdf = new jsPDF({
         orientation: 'landscape',
         unit: 'mm',
         format: 'a4',
       });
 
-      pdf.addImage(imgData, 'PNG', 0, 0, 297, 210, undefined, 'FAST');
+      // Layer 1: Pristine Original Template Image (297mm x 210mm)
+      pdf.addImage(bgImgData, 'JPEG', 0, 0, 297, 210, undefined, 'FAST');
+
+      // Layer 2: Crisp Transparent Text/QR Stamp Over Template
+      pdf.addImage(overlayImgData, 'PNG', 0, 0, 297, 210, undefined, 'FAST');
+
       const cleanFileName = (matchedCert.certificate_no || 'Certificate').replace(/[^a-zA-Z0-9_-]/g, '_');
       pdf.save(`${cleanFileName}.pdf`);
     } catch (err: any) {
