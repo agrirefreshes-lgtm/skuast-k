@@ -1,102 +1,135 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
+import { supabase } from '../lib/supabaseClient';
 import type { IssuedCertificate } from '../types/certificate';
-import { CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { XCircle, Loader2, CheckCircle2, ArrowLeft } from 'lucide-react';
 
 export const PublicVerification: React.FC = () => {
-  const [params] = useSearchParams();
-  const certId = params.get('id');
-  const [cert, setCert] = useState<IssuedCertificate | null>(null);
+  const [searchParams] = useSearchParams();
+  const certId = searchParams.get('id');
+
   const [loading, setLoading] = useState(true);
+  const [cert, setCert] = useState<IssuedCertificate | null>(null);
 
   useEffect(() => {
-    if (!certId) {
-      setLoading(false);
-      return;
-    }
-
-    const stored = localStorage.getItem('skuastk_certificates');
-    if (stored) {
-      try {
-        const list: IssuedCertificate[] = JSON.parse(stored);
-        const query = decodeURIComponent(certId).trim().toLowerCase();
-        const found = list.find((c) => c.certificate_no.toLowerCase() === query);
-        if (found) setCert(found);
-      } catch (err) {
-        console.error(err);
+    const verifyCert = async () => {
+      if (!certId) {
+        setLoading(false);
+        return;
       }
-    }
-    setLoading(false);
+
+      const { data: certData, error: certError } = await supabase
+        .from('certificates')
+        .select('*')
+        .eq('certificate_no', certId)
+        .maybeSingle();
+
+      if (!certError && certData) {
+        setCert({
+          certificate_no: certData.certificate_no,
+          event_id: certData.event_id,
+          event_name: certData.event_name,
+          issue_date: certData.issue_date,
+          status: certData.status,
+          data: certData.data,
+        });
+      }
+      setLoading(false);
+    };
+
+    verifyCert();
   }, [certId]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-4">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-emerald-800 mb-3"></div>
-        <p className="text-gray-700 text-sm font-medium">Verifying with SKUAST-K Official Registry...</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans">
-      <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl overflow-hidden border border-gray-200">
-        <div style={{ backgroundColor: '#0f5132' }} className="p-6 text-white text-center">
-          <div className="flex justify-center items-center gap-2 mb-2">
-            <ShieldCheck className="text-amber-400" size={24} />
-            <span className="text-xs uppercase tracking-wider font-semibold text-emerald-200">Official Portal</span>
+    <div className="min-h-[calc(100vh-140px)] flex items-center justify-center p-4">
+      <div className="max-w-lg w-full bg-white rounded-3xl p-6 md:p-8 shadow-xl border border-gray-200 space-y-6 text-center">
+
+        {loading ? (
+          <div className="py-12 flex flex-col items-center justify-center gap-3">
+            <Loader2 className="animate-spin text-emerald-800" size={32} />
+            <p className="text-xs text-gray-500 font-medium">Validating cryptographically with university database...</p>
           </div>
-          <h2 className="text-sm font-bold leading-tight">
-            Sher-e-Kashmir University of Agricultural Sciences and Technology of Kashmir
-          </h2>
-          <p className="text-[11px] text-emerald-200 mt-1">Shalimar Campus, Srinagar, J&K - 190025</p>
+        ) : cert ? (
+          <div className="space-y-4">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-800 rounded-full flex items-center justify-center mx-auto border-4 border-emerald-50">
+              <CheckCircle2 size={36} />
+            </div>
 
-          <div className="mt-3 text-xs bg-black/30 border border-white/20 py-1 px-3 rounded-full font-mono font-bold text-white inline-block">
-            {certId || 'ID MISSING'}
-          </div>
-        </div>
+            <div>
+              <span className="inline-block px-3 py-1 bg-emerald-100 text-emerald-900 rounded-full text-[11px] font-bold uppercase tracking-wider mb-2">
+                ✓ Authentic Certificate
+              </span>
+              <h2 className="text-lg font-bold text-gray-900">Valid Academic Credential</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Officially issued by SKUAST-Kashmir</p>
+            </div>
 
-        <div className="p-6">
-          {cert && cert.status === 'verified' ? (
-            <div className="text-center space-y-4">
-              <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle2 className="text-emerald-700" size={32} />
+            <div className="bg-slate-50 rounded-2xl p-4 border border-gray-200 text-left space-y-2 text-xs">
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-500 font-medium">Certificate No:</span>
+                <span className="font-mono font-bold text-gray-900">{cert.certificate_no}</span>
               </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-900">Official Certificate Verified</h3>
-                <p className="text-xs text-emerald-700 font-semibold">{cert.event_name}</p>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-500 font-medium">Event:</span>
+                <span className="font-bold text-emerald-900 text-right">{cert.event_name}</span>
               </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-500 font-medium">Issue Date:</span>
+                <span className="font-medium text-gray-800">{cert.issue_date}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500 font-medium">Status:</span>
+                <span className="font-bold text-emerald-700 capitalize">{cert.status}</span>
+              </div>
+            </div>
 
-              <div className="bg-slate-50 border border-gray-200 rounded-xl p-4 text-left text-xs space-y-2">
-                <div className="flex justify-between border-b pb-1.5">
-                  <span className="text-gray-500">Certificate No</span>
-                  <span className="font-bold text-gray-900 font-mono">{cert.certificate_no}</span>
-                </div>
-                <div className="flex justify-between border-b pb-1.5">
-                  <span className="text-gray-500">Issue Date</span>
-                  <span className="font-medium text-gray-800">{cert.issue_date}</span>
-                </div>
-
+            {/* Recipient Details */}
+            {cert.data && (
+              <div className="bg-emerald-50/50 rounded-2xl p-4 border border-emerald-100 text-left space-y-1.5 text-xs">
+                <p className="font-bold text-emerald-950 text-[11px] uppercase tracking-wide border-b border-emerald-200 pb-1 mb-2">
+                  Issued Candidate Record
+                </p>
                 {Object.entries(cert.data).map(([key, val]) => (
-                  <div key={key} className="flex justify-between border-b pb-1.5 gap-2">
-                    <span className="text-gray-500 capitalize">{key.replace(/_/g, ' ')}</span>
-                    <span className="font-semibold text-gray-800 text-right">{val}</span>
+                  <div key={key} className="flex justify-between py-0.5">
+                    <span className="text-gray-600 capitalize">{key.replace(/_/g, ' ')}:</span>
+                    <span className="font-bold text-gray-900 text-right">{val}</span>
                   </div>
                 ))}
               </div>
-            </div>
-          ) : (
-            <div className="text-center space-y-3 py-4">
-              <AlertTriangle className="text-amber-500 mx-auto" size={40} />
-              <h3 className="text-lg font-bold text-gray-800">Record Not Found / Invalid</h3>
-              <p className="text-xs text-gray-500">No matching SKUAST-K certificate record found for this number.</p>
-            </div>
-          )}
-        </div>
+            )}
 
-        <div className="bg-gray-50 border-t border-gray-100 py-3 text-center text-[10px] text-gray-400">
-          Sher-e-Kashmir University Digital Verification Services
-        </div>
+            <div className="pt-2">
+              <Link
+                to="/"
+                className="inline-flex items-center gap-1.5 text-xs text-emerald-800 hover:text-emerald-900 font-bold transition"
+              >
+                <ArrowLeft size={14} /> Back to Search
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto border-4 border-rose-50">
+              <XCircle size={36} />
+            </div>
+
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Certificate Not Found</h2>
+              <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
+                No record matched this certificate code. The credential may be invalid or not yet published.
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <Link
+                to="/"
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-[#0f5132] text-white rounded-xl text-xs font-bold shadow hover:bg-emerald-900 transition"
+              >
+                <ArrowLeft size={14} /> Back to Registry Search
+              </Link>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

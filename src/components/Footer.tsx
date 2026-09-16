@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   Building2, 
@@ -10,18 +10,28 @@ import {
 } from 'lucide-react';
 
 export const Footer: React.FC = () => {
+  const [logoErr, setLogoErr] = useState(false);
+
   return (
     <footer className="bg-slate-950 text-slate-300 border-t border-slate-800 font-sans mt-auto">
-      {/* Upper Main Footer */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           
-          {/* Col 1: University Info */}
+          {/* Col 1: University Info & Original Small Logo */}
           <div className="md:col-span-2 space-y-3">
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-emerald-700/30 border border-emerald-600 flex items-center justify-center text-emerald-400">
-                <Building2 size={22} />
-              </div>
+              {!logoErr ? (
+                <img 
+                  src="./logo.png" 
+                  alt="SKUAST-K Logo" 
+                  onError={() => setLogoErr(true)}
+                  className="h-10 w-10 object-contain rounded-full bg-white p-0.5 shadow border border-emerald-600"
+                />
+              ) : (
+                <div className="h-10 w-10 rounded-xl bg-emerald-700/30 border border-emerald-600 flex items-center justify-center text-emerald-400">
+                  <Building2 size={20} />
+                </div>
+              )}
               <div>
                 <h2 className="text-sm font-bold text-white uppercase tracking-wider font-serif">
                   Sher-e-Kashmir University
