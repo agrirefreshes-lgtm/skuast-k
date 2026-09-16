@@ -41,9 +41,13 @@ const CERT_FONTS = [
 
 export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent, readOnly = false }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  
-  // Can be a field key, '__cert_no__', or '__qr_code__'
   const [selectedElementKey, setSelectedElementKey] = useState<string | null>(null);
+
+  // Exact GitHub Pages path builder for QR (Prevents 404 across both Google Lens and Inbuilt Scanner)
+  const getQrVerificationUrl = () => {
+    const basePath = window.location.href.split('#')[0].replace(/\/+$/, '');
+    return `${basePath}/#/verify?id=${encodeURIComponent(cert.certificate_no)}`;
+  };
 
   const calculateDynamicStyle = (field: DynamicFieldDef, text: string) => {
     let currentFontSize = field.fontSize || 18;
@@ -123,7 +127,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   return (
     <div className="space-y-4">
       
-      {/* Quick Element Selection Bar (MS Word Layer Selector) */}
+      {/* Quick Element Selection Bar */}
       {!readOnly && (
         <div className="bg-slate-800 p-3 rounded-2xl border border-slate-700 flex flex-wrap items-center justify-between gap-3 shadow-sm">
           <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
@@ -262,7 +266,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
             }}
           >
             <QRCodeSVG
-              value={`${window.location.origin}/#/verify?id=${cert.certificate_no}`}
+              value={getQrVerificationUrl()}
               size={event.qrConfig.size}
               level="M"
               includeMargin={false}
@@ -293,7 +297,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-xs">
-            {/* Font Family Selector */}
             <div className="flex items-center gap-1.5 bg-slate-800 px-2.5 py-1.5 rounded-xl border border-slate-700">
               <Type size={14} className="text-emerald-400" />
               <select
@@ -309,7 +312,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               </select>
             </div>
 
-            {/* Font Size & Stepper */}
             <div className="flex items-center bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
               <button
                 onClick={() => updateSelectedField({ fontSize: Math.max(9, (selectedField.fontSize || 18) - 1) })}
@@ -328,7 +330,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               </button>
             </div>
 
-            {/* Bold / Italic / Uppercase Toggles */}
             <div className="flex items-center bg-slate-800 rounded-xl border border-slate-700 p-0.5">
               <button
                 onClick={() => updateSelectedField({ isBold: !selectedField.isBold })}
@@ -353,7 +354,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               </button>
             </div>
 
-            {/* Alignment Options */}
             <div className="flex items-center bg-slate-800 rounded-xl border border-slate-700 p-0.5">
               <button
                 onClick={() => updateSelectedField({ align: 'left' })}
@@ -375,7 +375,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               </button>
             </div>
 
-            {/* Text Color Picker */}
             <label className="flex items-center gap-1.5 bg-slate-800 px-2.5 py-1.5 rounded-xl border border-slate-700 cursor-pointer hover:border-slate-500 transition">
               <Palette size={14} className="text-amber-400" />
               <span className="text-[11px] text-slate-300">Color</span>
@@ -387,7 +386,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               />
             </label>
 
-            {/* Background / Highlight Color Picker */}
             <div className="flex items-center gap-1.5 bg-slate-800 px-2.5 py-1.5 rounded-xl border border-slate-700">
               <Highlighter size={14} className="text-amber-400" />
               <span className="text-[11px] text-slate-300">Highlight</span>
@@ -407,7 +405,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               )}
             </div>
 
-            {/* Max Width & Line Limit */}
             <div className="flex items-center gap-2 bg-slate-800 px-2.5 py-1.5 rounded-xl border border-slate-700">
               <Maximize2 size={13} className="text-cyan-400" />
               <span className="text-[11px] text-slate-300">Width:</span>
@@ -437,7 +434,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               </button>
             </div>
 
-            {/* D-Pad Precision Nudge Controls */}
             <div className="flex items-center gap-1 bg-slate-800 px-2 py-1 rounded-xl border border-slate-700">
               <span className="text-[10px] text-slate-400 mr-1 font-bold">NUDGE:</span>
               <button
@@ -516,7 +512,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               Bold
             </button>
 
-            {/* Nudge for Cert No */}
             <div className="flex items-center gap-1 bg-slate-800 px-2 py-1 rounded-xl border border-slate-700">
               <button
                 onClick={() => onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x: Math.max(0, Number((event.certNoConfig.x - 0.2).toFixed(2))) } })}
@@ -576,7 +571,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               </button>
             </div>
 
-            {/* Nudge for QR */}
             <div className="flex items-center gap-1 bg-slate-800 px-2 py-1 rounded-xl border border-slate-700">
               <button
                 onClick={() => onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, x: Math.max(0, Number((event.qrConfig.x - 0.2).toFixed(2))) } })}
