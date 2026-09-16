@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import { UserPortal } from './pages/UserPortal';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { PublicVerification } from './pages/PublicVerification';
