@@ -63,11 +63,16 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       currentFontSize = Math.max(10, Math.floor(currentFontSize * scale));
     }
 
+    // Single seamless background - eliminates grey highlight band
+    const safeBg = (field.backgroundColor && field.backgroundColor !== 'transparent' && field.backgroundColor !== '#ffffff')
+      ? field.backgroundColor
+      : 'transparent';
+
     return {
       fontSize: `${currentFontSize}px`,
       lineHeight: field.lineHeight || 1.35,
       color: field.color || '#111827',
-      backgroundColor: field.backgroundColor && field.backgroundColor !== 'transparent' ? field.backgroundColor : 'transparent',
+      backgroundColor: safeBg,
       fontFamily: field.fontFamily || 'Georgia, serif',
       fontWeight: field.isBold ? ('bold' as const) : ('normal' as const),
       fontStyle: field.isItalic ? ('italic' as const) : ('normal' as const),
@@ -75,8 +80,8 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       textAlign: (field.align || 'center') as any,
       width: `${maxAllowedWidth}px`,
       maxWidth: '96%',
-      padding: '2px 8px',
-      borderRadius: '4px',
+      padding: safeBg === 'transparent' ? '0px' : '2px 8px',
+      borderRadius: safeBg === 'transparent' ? '0px' : '4px',
       display: '-webkit-box',
       WebkitBoxOrient: 'vertical' as const,
       WebkitLineClamp: maxLines,
@@ -241,6 +246,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               color: event.certNoConfig.color,
               fontWeight: event.certNoConfig.isBold ? 'bold' : 'normal',
               whiteSpace: 'nowrap',
+              backgroundColor: 'transparent',
             }}
           >
             {cert.certificate_no}
@@ -256,7 +262,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
             className={`absolute transform -translate-x-1/2 -translate-y-1/2 ${
               !readOnly
                 ? `cursor-move hover:ring-2 hover:ring-emerald-500 rounded p-1 ${
-                    selectedElementKey === '__qr_code__' ? 'ring-2 ring-blue-500 bg-blue-100 shadow-md' : 'bg-white/60'
+                    selectedElementKey === '__qr_code__' ? 'ring-2 ring-blue-500 bg-blue-100 shadow-md' : 'bg-white/90'
                   }`
                 : 'bg-white p-1 rounded-sm'
             }`}

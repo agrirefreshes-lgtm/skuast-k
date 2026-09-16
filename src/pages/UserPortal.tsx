@@ -200,6 +200,18 @@ export const UserPortal: React.FC = () => {
           clonedEl.style.transform = 'none';
           clonedEl.style.backgroundImage = `url("${safeBgUrl}")`;
           clonedEl.style.backgroundSize = '100% 100%';
+          clonedEl.style.backgroundColor = 'transparent';
+
+          // Strictly remove all nested container backgrounds (eliminates grey shade band)
+          const allNestedDivs = clonedEl.querySelectorAll('div');
+          allNestedDivs.forEach((d) => {
+            const el = d as HTMLElement;
+            // Agar QR code ka white wrapper na ho toh sab transparent karo
+            if (!el.classList.contains('bg-white')) {
+              el.style.backgroundColor = 'transparent';
+            }
+            el.style.boxShadow = 'none';
+          });
 
           // Modern oklch color parsing crash protection
           const elements = clonedDoc.querySelectorAll('*');
@@ -210,11 +222,8 @@ export const UserPortal: React.FC = () => {
             if (style.color && style.color.includes('oklch')) {
               htmlEl.style.color = '#111827';
             }
-            if (style.backgroundColor && style.backgroundColor.includes('oklch')) {
-              htmlEl.style.backgroundColor = 'transparent';
-            }
             if (style.borderColor && style.borderColor.includes('oklch')) {
-              htmlEl.style.borderColor = '#e5e7eb';
+              htmlEl.style.borderColor = 'transparent';
             }
           });
         }
