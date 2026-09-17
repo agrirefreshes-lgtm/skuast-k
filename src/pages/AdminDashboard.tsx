@@ -22,15 +22,18 @@ import {
   ChevronRight, 
   UserCheck,
   UserPlus,
-  X,
+  Building,
   Mail,
-  Building
+  KeyRound,
+  Users
 } from 'lucide-react';
 
 interface AdminProfile {
+  id?: string;
   email: string;
   role: string;
   department: string;
+  created_at?: string;
 }
 
 export const AdminDashboard: React.FC = () => {
@@ -39,6 +42,7 @@ export const AdminDashboard: React.FC = () => {
   });
 
   const [userProfile, setUserProfile] = useState<AdminProfile | null>(null);
+  const [adminList, setAdminList] = useState<AdminProfile[]>([]);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [certificates, setCertificates] = useState<IssuedCertificate[]>([]);
@@ -47,13 +51,13 @@ export const AdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [uploadingImage, setUploadingImage] = useState(false);
 
-  // Invite Modal States for Super Admin
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteDept, setInviteDept] = useState('');
-  const [inviting, setInviting] = useState(false);
+  // SuperAdmin: Form states to create new Department Admin
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [newAdminPassword, setNewAdminPassword] = useState('');
+  const [newAdminDept, setNewAdminDept] = useState('');
+  const [creatingAdmin, setCreatingAdmin] = useState(false);
+  const [formMsg, setFormMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Bullet-Proof Guard: Verifies live Supabase Auth JWT Session
   const verifyLiveSession = useCallback(async (): Promise<string | null> => {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error || !session?.user) {
@@ -65,9 +69,19 @@ export const AdminDashboard: React.FC = () => {
     return session.user.id;
   }, []);
 
-  const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];
+  const loadAdminDirectory = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('admin_profiles')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-  // 1. Fetch Events from Supabase (Isolated by RLS)
+    if (!error && data) {
+      setAdminList(data);
+    }
+    setLoading(false);
+  }, []);
+
   const loadEvents = useCallback(async () => {
     setLoading(true);
     const { data: dbEvents, error } = await supabase
@@ -75,9 +89,7 @@ export const AdminDashboard: React.FC = () => {
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('Error fetching events:', error);
-    } else if (dbEvents && dbEvents.length > 0) {
+    if (!error && dbEvents && dbEvents.length > 0) {
       const formatted: EventItem[] = dbEvents.map((e: any) => ({
         id: e.id,
         name: e.name,
@@ -100,7 +112,6 @@ export const AdminDashboard: React.FC = () => {
     setLoading(false);
   }, []);
 
-  // 2. Fetch Certificates for Current Event (Isolated by RLS)
   const loadCertificates = useCallback(async (eventId: string) => {
     if (!eventId) {
       setCertificates([]);
@@ -126,7 +137,6 @@ export const AdminDashboard: React.FC = () => {
     }
   }, []);
 
-  // Initial Auth Lifecycle Check
   useEffect(() => {
     const initAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -140,35 +150,38 @@ export const AdminDashboard: React.FC = () => {
       setIsAuthenticated(true);
       sessionStorage.setItem('skuastk_admin_auth', 'true');
 
-      // Fetch Profile for Role Based UI
       const { data: profile } = await supabase
         .from('admin_profiles')
-        .select('email, role, department')
+        .select('id, email, role, department')
         .eq('id', session.user.id)
         .maybeSingle();
 
       if (profile) {
         setUserProfile(profile);
+        if (profile.role === 'super_admin') {
+          await loadAdminDirectory();
+        } else {
+          await loadEvents();
+        }
       } else {
         setUserProfile({
           email: session.user.email || 'Admin',
           role: 'event_admin',
           department: 'Academic Unit'
         });
+        await loadEvents();
       }
-
-      await loadEvents();
     };
 
     initAuth();
-  }, [loadEvents]);
+  }, [loadAdminDirectory, loadEvents]);
 
   useEffect(() => {
-    if (selectedEventId) {
+    if (userProfile?.role !== 'super_admin' && selectedEventId) {
       loadCertificates(selectedEventId);
       setActiveCertIndex(0);
     }
-  }, [selectedEventId, loadCertificates]);
+  }, [selectedEventId, loadCertificates, userProfile?.role]);
 
   if (!isAuthenticated) {
     return (
@@ -188,14 +201,37 @@ export const AdminDashboard: React.FC = () => {
     setUserProfile(null);
     setEvents([]);
     setCertificates([]);
+    setAdminList([]);
   };
 
-  const getPublicEventUrl = (event: EventItem) => {
-    const baseUrl = window.location.href.split('#')[0].replace(/\/+$/, '');
-    return `${baseUrl}/#/event/${event.slug || event.id}`;
+  // SuperAdmin: Handle Direct Creation of Department Admin
+  const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormMsg(null);
+    setCreatingAdmin(true);
+
+    try {
+      const { error } = await supabase.rpc('create_department_admin', {
+        p_email: newAdminEmail.trim().toLowerCase(),
+        p_password: newAdminPassword.trim(),
+        p_department: newAdminDept.trim()
+      });
+
+      if (error) throw error;
+
+      setFormMsg({ type: 'success', text: `Department Admin created successfully for ${newAdminEmail}!` });
+      setNewAdminEmail('');
+      setNewAdminPassword('');
+      setNewAdminDept('');
+      await loadAdminDirectory();
+    } catch (err: any) {
+      setFormMsg({ type: 'error', text: err.message || 'Failed to create department admin.' });
+    } finally {
+      setCreatingAdmin(false);
+    }
   };
 
-  // 1. Create Event with Backend User ID Binding
+  // Event Admin Actions:
   const handleCreateEvent = async () => {
     const userId = await verifyLiveSession();
     if (!userId) return;
@@ -231,7 +267,7 @@ export const AdminDashboard: React.FC = () => {
       security_auth_field: newEv.securityAuthField,
       qr_config: newEv.qrConfig,
       cert_no_config: newEv.certNoConfig,
-      created_by: userId // Links to logged-in user
+      created_by: userId
     });
 
     if (error) {
@@ -242,13 +278,11 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // 2. Delete Entire Event with Live Guard
   const handleDeleteEvent = async (eventId: string, eventName: string) => {
     const userId = await verifyLiveSession();
     if (!userId) return;
 
-    const confirmDelete = confirm(`Kya aap sach me "${eventName}" event ko delete karna chahte hain?\nIs event ke saare certificates aur uploaded data permanent delete ho jayenge!`);
-    if (!confirmDelete) return;
+    if (!confirm(`Kya aap "${eventName}" event ko delete karna chahte hain?`)) return;
 
     await supabase.from('certificates').delete().eq('event_id', eventId);
     const { error } = await supabase.from('events').delete().eq('id', eventId);
@@ -266,16 +300,14 @@ export const AdminDashboard: React.FC = () => {
       setSelectedEventId('');
       setCertificates([]);
     }
-    alert(`Event "${eventName}" successfully delete ho gaya!`);
   };
 
-  // 3. Upload Template Image with Live Guard
   const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const userId = await verifyLiveSession();
-    if (!userId) return;
+    if (!userId || !currentEvent) return;
 
     const file = e.target.files?.[0];
-    if (!file || !currentEvent) return;
+    if (!file) return;
 
     setUploadingImage(true);
     const fileExt = file.name.split('.').pop();
@@ -303,7 +335,6 @@ export const AdminDashboard: React.FC = () => {
     setUploadingImage(false);
   };
 
-  // 4. Update Event Layout with Live Guard
   const handleUpdateEvent = async (updated: EventItem) => {
     const userId = await verifyLiveSession();
     if (!userId) return;
@@ -318,7 +349,6 @@ export const AdminDashboard: React.FC = () => {
     }).eq('id', updated.id);
   };
 
-  // 5. Excel Batch Upload with Live Guard & Batch User Stamp
   const handleExcelParsed = async (records: Record<string, string>[], columns: string[], fileName: string) => {
     const userId = await verifyLiveSession();
     if (!userId || !currentEvent) return;
@@ -374,7 +404,7 @@ export const AdminDashboard: React.FC = () => {
         issue_date: certObj.issue_date,
         status: 'verified',
         data: row,
-        created_by: userId // Bound to current admin
+        created_by: userId
       });
     });
 
@@ -408,7 +438,6 @@ export const AdminDashboard: React.FC = () => {
     alert(`${records.length} Certificates Supabase Cloud me successfully save ho gaye!`);
   };
 
-  // 6. Delete Batch with Live Guard
   const handleDeleteBatch = async (batchId: string) => {
     const userId = await verifyLiveSession();
     if (!userId) return;
@@ -422,41 +451,6 @@ export const AdminDashboard: React.FC = () => {
     const updatedEvent = { ...currentEvent, batches: updatedBatches };
     setEvents(events.map((ev) => (ev.id === currentEvent.id ? updatedEvent : ev)));
     loadCertificates(currentEvent.id);
-  };
-
-  // 7. Super Admin Invite Trigger
-  const handleInviteAdmin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inviteEmail.trim() || !inviteDept.trim()) return;
-
-    setInviting(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/invite-admin`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`
-        },
-        body: JSON.stringify({
-          email: inviteEmail.trim(),
-          department: inviteDept.trim(),
-          role: 'event_admin'
-        })
-      });
-
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Failed to send invite.');
-
-      alert(result.message || 'Invitation sent successfully!');
-      setInviteEmail('');
-      setInviteDept('');
-      setShowInviteModal(false);
-    } catch (err: any) {
-      alert('Invite error: ' + err.message);
-    } finally {
-      setInviting(false);
-    }
   };
 
   const handleExportEventExcel = () => {
@@ -474,356 +468,420 @@ export const AdminDashboard: React.FC = () => {
     XLSX.writeFile(wb, `${currentEvent.name.replace(/\s+/g, '_')}_Official_List.xlsx`);
   };
 
-  const copyShareLink = () => {
-    if (!currentEvent) return;
-    const link = getPublicEventUrl(currentEvent);
-    navigator.clipboard.writeText(link);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
+  const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];
   const activeCert = certificates[activeCertIndex] || certificates[0];
+  const isSuperAdmin = userProfile?.role === 'super_admin';
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-6 font-sans">
       <div className="max-w-6xl mx-auto space-y-6">
         
-        {/* University Header with Role & Department Badge */}
+        {/* Top University Ribbon Header */}
         <div style={{ backgroundColor: '#0f5132' }} className="p-6 rounded-2xl text-white shadow-lg flex flex-wrap gap-4 justify-between items-center">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold">Sher-e-Kashmir University (SKUAST-K)</h1>
-              {userProfile && (
-                <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${
-                  userProfile.role === 'super_admin' ? 'bg-amber-400 text-slate-950' : 'bg-emerald-800 text-emerald-100 border border-emerald-600'
-                }`}>
-                  {userProfile.role === 'super_admin' ? 'Super Admin' : userProfile.department}
-                </span>
-              )}
+              <span className={`text-[10px] uppercase font-black px-2.5 py-0.5 rounded-full shadow-sm ${
+                isSuperAdmin ? 'bg-amber-400 text-slate-950' : 'bg-emerald-800 text-emerald-100 border border-emerald-600'
+              }`}>
+                {isSuperAdmin ? 'Central Super Admin' : userProfile?.department || 'Department Admin'}
+              </span>
             </div>
             <p className="text-xs text-green-200 mt-1">
-              Logged in as: <span className="font-mono text-white font-semibold">{userProfile?.email || 'Admin'}</span>
+              {isSuperAdmin ? 'System Governance & Administrative Delegations' : 'Event Digital Certification Engine • Shalimar Campus'}
             </p>
           </div>
           
           <div className="flex items-center gap-2">
-            {userProfile?.role === 'super_admin' && (
+            {!isSuperAdmin && (
               <button 
-                onClick={() => setShowInviteModal(true)} 
-                className="bg-emerald-800 hover:bg-emerald-700 border border-emerald-600 text-white font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow transition"
+                onClick={handleCreateEvent} 
+                className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1 cursor-pointer shadow transition"
               >
-                <UserPlus size={15} /> + Invite Admin
+                <FolderPlus size={16} /> + Create New Event
               </button>
             )}
-
-            <button 
-              onClick={handleCreateEvent} 
-              className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1 cursor-pointer shadow transition"
-            >
-              <FolderPlus size={16} /> + Create New Event
-            </button>
             
             <button 
               onClick={handleLogout} 
-              className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl text-xs flex items-center gap-1 cursor-pointer font-semibold shadow transition"
+              className="bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-2 rounded-xl text-xs flex items-center gap-1 cursor-pointer font-semibold shadow transition"
             >
               <LogOut size={14} /> Logout
             </button>
           </div>
         </div>
 
-        {/* Super Admin Invite Modal */}
-        {showInviteModal && (
-          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl border border-gray-200 space-y-4">
-              <div className="flex items-center justify-between border-b pb-3">
-                <div className="flex items-center gap-2">
+        {/* ---------------- SUPER ADMIN CONSOLE ---------------- */}
+        {isSuperAdmin ? (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* Left Column: Create New Admin Form */}
+              <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-2 border-b pb-3">
                   <UserPlus className="text-emerald-700" size={20} />
-                  <h3 className="text-base font-bold text-gray-900">Invite Department Admin</h3>
+                  <div>
+                    <h2 className="text-sm font-bold text-gray-900">Create Department Admin</h2>
+                    <p className="text-[11px] text-gray-500">Authorize a new faculty/department incharge</p>
+                  </div>
                 </div>
-                <button 
-                  onClick={() => setShowInviteModal(false)}
-                  className="text-gray-400 hover:text-gray-700 p-1 rounded-lg cursor-pointer"
-                >
-                  <X size={18} />
-                </button>
+
+                {formMsg && (
+                  <div className={`p-3 rounded-xl text-xs font-semibold ${
+                    formMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
+                  }`}>
+                    {formMsg.text}
+                  </div>
+                )}
+
+                <form onSubmit={handleCreateDepartmentAdmin} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Official University Email</label>
+                    <div className="relative">
+                      <Mail size={15} className="absolute left-3 top-3 text-gray-400" />
+                      <input 
+                        type="email"
+                        required
+                        placeholder="hod.agronomy@skuastkashmir.ac.in"
+                        value={newAdminEmail}
+                        onChange={(e) => setNewAdminEmail(e.target.value)}
+                        className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Assigned Department / Division</label>
+                    <div className="relative">
+                      <Building size={15} className="absolute left-3 top-3 text-gray-400" />
+                      <input 
+                        type="text"
+                        required
+                        placeholder="e.g. Division of Agronomy / Horticulture"
+                        value={newAdminDept}
+                        onChange={(e) => setNewAdminDept(e.target.value)}
+                        className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Set Temporary Password</label>
+                    <div className="relative">
+                      <KeyRound size={15} className="absolute left-3 top-3 text-gray-400" />
+                      <input 
+                        type="password"
+                        required
+                        placeholder="••••••••••••"
+                        value={newAdminPassword}
+                        onChange={(e) => setNewAdminPassword(e.target.value)}
+                        className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={creatingAdmin}
+                    style={{ backgroundColor: '#0f5132' }}
+                    className="w-full py-2.5 mt-2 text-white text-xs font-bold rounded-xl shadow hover:opacity-90 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                  >
+                    {creatingAdmin ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={16} />}
+                    <span>{creatingAdmin ? 'Authorizing & Creating...' : 'Create Department Admin'}</span>
+                  </button>
+                </form>
               </div>
 
-              <form onSubmit={handleInviteAdmin} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Official University Email</label>
-                  <div className="relative">
-                    <Mail size={15} className="absolute left-3 top-3 text-gray-400" />
-                    <input 
-                      type="email"
-                      required
-                      placeholder="hod.dept@skuastkashmir.ac.in"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
-                    />
+              {/* Right Column: Active Department Admins List */}
+              <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b pb-3">
+                  <div className="flex items-center gap-2">
+                    <Users className="text-emerald-700" size={20} />
+                    <h2 className="text-sm font-bold text-gray-900">Registered Department Administrators</h2>
                   </div>
+                  <span className="text-xs bg-slate-100 px-3 py-1 rounded-full font-bold text-slate-700 border">
+                    {adminList.length} Active Accounts
+                  </span>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Assigned Department</label>
-                  <div className="relative">
-                    <Building size={15} className="absolute left-3 top-3 text-gray-400" />
-                    <input 
-                      type="text"
-                      required
-                      placeholder="e.g. Faculty of Horticulture / Agronomy"
-                      value={inviteDept}
-                      onChange={(e) => setInviteDept(e.target.value)}
-                      className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
-                    />
+                {loading ? (
+                  <div className="py-12 text-center text-xs text-gray-500 flex justify-center items-center gap-2">
+                    <Loader2 size={16} className="animate-spin text-emerald-800" /> Loading administrative ledger...
                   </div>
-                </div>
+                ) : adminList.length === 0 ? (
+                  <p className="text-xs text-gray-500 text-center py-8">No department admins created yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b bg-slate-50 text-slate-600">
+                          <th className="py-2.5 px-3 rounded-l-lg">Admin Official Email</th>
+                          <th className="py-2.5 px-3">Assigned Department</th>
+                          <th className="py-2.5 px-3">Role Privilege</th>
+                          <th className="py-2.5 px-3 rounded-r-lg">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {adminList.map((adm) => (
+                          <tr key={adm.id || adm.email} className="hover:bg-slate-50/80">
+                            <td className="py-3 px-3 font-mono font-semibold text-slate-800">{adm.email}</td>
+                            <td className="py-3 px-3 font-medium text-slate-700">{adm.department || 'Central'}</td>
+                            <td className="py-3 px-3">
+                              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                                adm.role === 'super_admin' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              }`}>
+                                {adm.role === 'super_admin' ? 'Super Admin' : 'Event Admin'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className="text-[11px] text-emerald-700 font-bold flex items-center gap-1">
+                                <Check size={13} /> Active
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
 
-                <div className="pt-2 flex justify-end gap-2">
-                  <button 
-                    type="button"
-                    onClick={() => setShowInviteModal(false)}
-                    className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    type="submit"
-                    disabled={inviting}
-                    className="px-5 py-2 text-xs font-bold text-white bg-[#0f5132] hover:bg-emerald-900 rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-60 shadow"
-                  >
-                    {inviting ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
-                    <span>{inviting ? 'Sending Invite...' : 'Send Secure Invite'}</span>
-                  </button>
-                </div>
-              </form>
             </div>
-          </div>
-        )}
-
-        {loading ? (
-          <div className="bg-white p-12 rounded-2xl border text-center text-sm font-medium text-gray-500 flex justify-center items-center gap-2">
-            <Loader2 className="animate-spin text-emerald-800" size={20} /> Loading events from Supabase Cloud...
-          </div>
-        ) : events.length === 0 ? (
-          <div className="bg-white p-12 rounded-2xl border text-center space-y-3">
-            <p className="text-gray-600 text-sm">Abhi tak koi event nahi bana hai ya aapko assign nahi kiya gaya hai.</p>
-            <button onClick={handleCreateEvent} className="bg-emerald-800 text-white text-xs font-bold px-4 py-2 rounded-xl">
-              + Pehla Event Banayein
-            </button>
           </div>
         ) : (
+
+          /* ---------------- EVENT / DEPARTMENT ADMIN CONSOLE ---------------- */
           <>
-            {/* Event Tabs with Delete Button */}
-            <div className="flex gap-2 overflow-x-auto pb-1 items-center">
-              {events.map((ev) => (
-                <div
-                  key={ev.id}
-                  className={`flex items-center rounded-xl text-xs font-bold transition whitespace-nowrap shadow-sm border ${
-                    selectedEventId === ev.id 
-                      ? 'bg-slate-900 text-white border-slate-900' 
-                      : 'bg-white text-slate-700 hover:bg-slate-100 border-gray-200'
-                  }`}
-                >
-                  <button
-                    onClick={() => setSelectedEventId(ev.id)}
-                    className="px-3.5 py-2 cursor-pointer flex items-center gap-1.5"
-                  >
-                    <span>{ev.name}</span>
-                    <span className="text-[10px] opacity-70">({ev.certPrefix})</span>
-                  </button>
-                  
-                  <button
-                    title={`Delete Event ${ev.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteEvent(ev.id, ev.name);
-                    }}
-                    className={`px-2 py-2 hover:text-rose-500 transition cursor-pointer border-l ${
-                      selectedEventId === ev.id ? 'border-slate-800 text-slate-400' : 'border-gray-200 text-gray-400'
-                    }`}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            {/* Public Link Card */}
-            <div className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-              <div>
-                <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
-                  <LinkIcon size={14} /> Public Download Link (Universal)
-                </span>
-                <span className="text-xs font-mono font-semibold text-slate-800 mt-1 block select-all">
-                  {getPublicEventUrl(currentEvent)}
-                </span>
+            {loading ? (
+              <div className="bg-white p-12 rounded-2xl border text-center text-sm font-medium text-gray-500 flex justify-center items-center gap-2">
+                <Loader2 className="animate-spin text-emerald-800" size={20} /> Loading events from Supabase Cloud...
               </div>
-              <button
-                onClick={copyShareLink}
-                style={{ backgroundColor: copied ? '#15803d' : '#0f5132' }}
-                className="text-white px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow"
-              >
-                {copied ? <Check size={14} /> : <LinkIcon size={14} />}
-                {copied ? 'Copied to Clipboard!' : 'Copy Share Link'}
-              </button>
-            </div>
-
-            {/* 2-Factor Configuration */}
-            <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm space-y-3">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="text-amber-500" size={18} />
-                <h3 className="text-xs font-bold text-gray-800">2-Factor Security Authentication for Public Download</h3>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Primary Identifier (Name)</label>
-                  <select
-                    value={currentEvent.primaryAuthField}
-                    onChange={(e) => handleUpdateEvent({ ...currentEvent, primaryAuthField: e.target.value })}
-                    className="w-full text-xs p-2 rounded-lg border bg-slate-50"
-                  >
-                    {currentEvent.fields.map((f) => (
-                      <option key={f.key} value={f.label}>{f.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Security Check (Reg No / Mobile)</label>
-                  <select
-                    value={currentEvent.securityAuthField}
-                    onChange={(e) => handleUpdateEvent({ ...currentEvent, securityAuthField: e.target.value })}
-                    className="w-full text-xs p-2 rounded-lg border bg-slate-50"
-                  >
-                    {currentEvent.fields.map((f) => (
-                      <option key={f.key} value={f.label}>{f.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Template & Field Visibility */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-2">
-                <h3 className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
-                  <ImagePlus size={16} className="text-emerald-700" /> Template Image (Cloud)
-                </h3>
-                <label className="border border-dashed border-gray-300 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer hover:border-emerald-700 bg-gray-50">
-                  <span className="text-[11px] text-gray-600 font-medium">
-                    {uploadingImage ? 'Uploading to Supabase...' : 'Upload Template (PNG/JPG)'}
-                  </span>
-                  <input type="file" accept="image/*" disabled={uploadingImage} onChange={handleTemplateUpload} className="hidden" />
-                </label>
-              </div>
-
-              <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-2 md:col-span-2">
-                <h3 className="text-xs font-bold text-gray-800">Print Visibility on Certificate</h3>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {currentEvent.fields.map((f) => (
-                    <button
-                      key={f.key}
-                      onClick={() => {
-                        const updatedFields = currentEvent.fields.map((field) =>
-                          field.key === f.key ? { ...field, visible: !field.visible } : field
-                        );
-                        handleUpdateEvent({ ...currentEvent, fields: updatedFields });
-                      }}
-                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition cursor-pointer ${
-                        f.visible ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-gray-100 border-gray-200 text-gray-400 line-through'
-                      }`}
-                    >
-                      {f.visible ? <Eye size={13} /> : <EyeOff size={13} />}
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Upload Batch & Export */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white p-5 rounded-2xl border border-gray-200 space-y-2">
-                <h3 className="text-xs font-bold text-gray-800 flex items-center gap-2">
-                  <FileSpreadsheet className="text-emerald-700" size={16} /> Upload Candidate Batch (Excel)
-                </h3>
-                <ExcelUploader onParsed={handleExcelParsed} />
-              </div>
-
-              <div className="bg-white p-5 rounded-2xl border border-gray-200 flex flex-col justify-between">
-                <div>
-                  <h3 className="text-xs font-bold text-gray-800">Uploaded Cloud Batches</h3>
-                  <div className="space-y-1.5 mt-2 max-h-24 overflow-y-auto">
-                    {currentEvent.batches.map((b) => (
-                      <div key={b.batchId} className="flex items-center justify-between bg-slate-50 px-3 py-1.5 rounded-lg text-xs border border-gray-200">
-                        <div>
-                          <span className="font-semibold text-slate-800">{b.fileName}</span>
-                          <span className="text-[10px] text-slate-400 ml-2">({b.count} records)</span>
-                        </div>
-                        <button onClick={() => handleDeleteBatch(b.batchId)} className="text-rose-500 hover:text-rose-700 p-1 cursor-pointer">
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <button
-                  onClick={handleExportEventExcel}
-                  className="mt-3 flex items-center justify-center gap-2 w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                >
-                  <Download size={14} /> Export Master Excel (With Assigned Cert Nos)
+            ) : events.length === 0 ? (
+              <div className="bg-white p-12 rounded-2xl border text-center space-y-3">
+                <p className="text-gray-600 text-sm">Abhi tak aapke department ka koi event nahi bana hai.</p>
+                <button onClick={handleCreateEvent} className="bg-emerald-800 text-white text-xs font-bold px-4 py-2 rounded-xl cursor-pointer">
+                  + Pehla Event Banayein
                 </button>
               </div>
-            </div>
+            ) : (
+              <>
+                {/* Event Selector Tabs */}
+                <div className="flex gap-2 overflow-x-auto pb-1 items-center">
+                  {events.map((ev) => (
+                    <div
+                      key={ev.id}
+                      className={`flex items-center rounded-xl text-xs font-bold transition whitespace-nowrap shadow-sm border ${
+                        selectedEventId === ev.id 
+                          ? 'bg-slate-900 text-white border-slate-900' 
+                          : 'bg-white text-slate-700 hover:bg-slate-100 border-gray-200'
+                      }`}
+                    >
+                      <button
+                        onClick={() => setSelectedEventId(ev.id)}
+                        className="px-3.5 py-2 cursor-pointer flex items-center gap-1.5"
+                      >
+                        <span>{ev.name}</span>
+                        <span className="text-[10px] opacity-70">({ev.certPrefix})</span>
+                      </button>
+                      
+                      <button
+                        title={`Delete Event ${ev.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteEvent(ev.id, ev.name);
+                        }}
+                        className={`px-2 py-2 hover:text-rose-500 transition cursor-pointer border-l ${
+                          selectedEventId === ev.id ? 'border-slate-800 text-slate-400' : 'border-gray-200 text-gray-400'
+                        }`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
 
-            {/* Visual Canvas Preview + Participant Data Scroller */}
-            {certificates.length > 0 && activeCert && (
-              <div className="bg-white p-5 rounded-2xl border border-gray-200 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                {/* Event Public Link */}
+                <div className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
                   <div>
-                    <h3 className="text-sm font-bold text-gray-800">Visual Coordinate Designer</h3>
-                    <p className="text-[11px] text-gray-500">Coordinate drag karein ya record switch karke template check karein</p>
+                    <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                      <LinkIcon size={14} /> Public Download Link (Universal)
+                    </span>
+                    <span className="text-xs font-mono font-semibold text-slate-800 mt-1 block select-all">
+                      {window.location.href.split('#')[0].replace(/\/+$/, '')}/#/event/{currentEvent.slug || currentEvent.id}
+                    </span>
                   </div>
+                  <button
+                    onClick={() => {
+                      const link = `${window.location.href.split('#')[0].replace(/\/+$/, '')}/#/event/${currentEvent.slug || currentEvent.id}`;
+                      navigator.clipboard.writeText(link);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    style={{ backgroundColor: copied ? '#15803d' : '#0f5132' }}
+                    className="text-white px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow"
+                  >
+                    {copied ? <Check size={14} /> : <LinkIcon size={14} />}
+                    {copied ? 'Copied to Clipboard!' : 'Copy Share Link'}
+                  </button>
+                </div>
 
-                  <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
-                    <UserCheck size={15} className="text-emerald-700" />
-                    <span className="text-xs font-semibold text-slate-700 font-mono">
-                      {activeCert.certificate_no}
-                    </span>
-                    <span className="text-[11px] text-slate-500 bg-white px-2 py-0.5 rounded-md border font-medium">
-                      {activeCertIndex + 1} of {certificates.length}
-                    </span>
-                    <div className="flex items-center gap-1 ml-1">
-                      <button
-                        onClick={() => setActiveCertIndex((prev) => Math.max(0, prev - 1))}
-                        disabled={activeCertIndex === 0}
-                        className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
-                        title="Previous Candidate"
+                {/* 2-Factor Auth Field Mapping */}
+                <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm space-y-3">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="text-amber-500" size={18} />
+                    <h3 className="text-xs font-bold text-gray-800">2-Factor Security Authentication for Public Download</h3>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-700 mb-1">Primary Identifier (Name)</label>
+                      <select
+                        value={currentEvent.primaryAuthField}
+                        onChange={(e) => handleUpdateEvent({ ...currentEvent, primaryAuthField: e.target.value })}
+                        className="w-full text-xs p-2 rounded-lg border bg-slate-50"
                       >
-                        <ChevronLeft size={16} />
-                      </button>
-                      <button
-                        onClick={() => setActiveCertIndex((prev) => Math.min(certificates.length - 1, prev + 1))}
-                        disabled={activeCertIndex === certificates.length - 1}
-                        className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
-                        title="Next Candidate"
+                        {currentEvent.fields.map((f) => (
+                          <option key={f.key} value={f.label}>{f.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-700 mb-1">Security Check (Reg No / Mobile)</label>
+                      <select
+                        value={currentEvent.securityAuthField}
+                        onChange={(e) => handleUpdateEvent({ ...currentEvent, securityAuthField: e.target.value })}
+                        className="w-full text-xs p-2 rounded-lg border bg-slate-50"
                       >
-                        <ChevronRight size={16} />
-                      </button>
+                        {currentEvent.fields.map((f) => (
+                          <option key={f.key} value={f.label}>{f.label}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
 
-                <CertificateCanvas
-                  event={currentEvent}
-                  cert={activeCert}
-                  onUpdateEvent={handleUpdateEvent}
-                />
-              </div>
+                {/* Template & Field Visibility */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-2">
+                    <h3 className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                      <ImagePlus size={16} className="text-emerald-700" /> Template Image (Cloud)
+                    </h3>
+                    <label className="border border-dashed border-gray-300 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer hover:border-emerald-700 bg-gray-50">
+                      <span className="text-[11px] text-gray-600 font-medium">
+                        {uploadingImage ? 'Uploading to Supabase...' : 'Upload Template (PNG/JPG)'}
+                      </span>
+                      <input type="file" accept="image/*" disabled={uploadingImage} onChange={handleTemplateUpload} className="hidden" />
+                    </label>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-2 md:col-span-2">
+                    <h3 className="text-xs font-bold text-gray-800">Print Visibility on Certificate</h3>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {currentEvent.fields.map((f) => (
+                        <button
+                          key={f.key}
+                          onClick={() => {
+                            const updatedFields = currentEvent.fields.map((field) =>
+                              field.key === f.key ? { ...field, visible: !field.visible } : field
+                            );
+                            handleUpdateEvent({ ...currentEvent, fields: updatedFields });
+                          }}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition cursor-pointer ${
+                            f.visible ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-gray-100 border-gray-200 text-gray-400 line-through'
+                          }`}
+                        >
+                          {f.visible ? <Eye size={13} /> : <EyeOff size={13} />}
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Upload Batch & Export */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-white p-5 rounded-2xl border border-gray-200 space-y-2">
+                    <h3 className="text-xs font-bold text-gray-800 flex items-center gap-2">
+                      <FileSpreadsheet className="text-emerald-700" size={16} /> Upload Candidate Batch (Excel)
+                    </h3>
+                    <ExcelUploader onParsed={handleExcelParsed} />
+                  </div>
+
+                  <div className="bg-white p-5 rounded-2xl border border-gray-200 flex flex-col justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-800">Uploaded Cloud Batches</h3>
+                      <div className="space-y-1.5 mt-2 max-h-24 overflow-y-auto">
+                        {currentEvent.batches.map((b) => (
+                          <div key={b.batchId} className="flex items-center justify-between bg-slate-50 px-3 py-1.5 rounded-lg text-xs border border-gray-200">
+                            <div>
+                              <span className="font-semibold text-slate-800">{b.fileName}</span>
+                              <span className="text-[10px] text-slate-400 ml-2">({b.count} records)</span>
+                            </div>
+                            <button onClick={() => handleDeleteBatch(b.batchId)} className="text-rose-500 hover:text-rose-700 p-1 cursor-pointer">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleExportEventExcel}
+                      className="mt-3 flex items-center justify-center gap-2 w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                    >
+                      <Download size={14} /> Export Master Excel (With Assigned Cert Nos)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Visual Canvas Designer */}
+                {certificates.length > 0 && activeCert && (
+                  <div className="bg-white p-5 rounded-2xl border border-gray-200 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-800">Visual Coordinate Designer</h3>
+                        <p className="text-[11px] text-gray-500">Coordinate drag karein ya record switch karke template check karein</p>
+                      </div>
+
+                      <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                        <UserCheck size={15} className="text-emerald-700" />
+                        <span className="text-xs font-semibold text-slate-700 font-mono">
+                          {activeCert.certificate_no}
+                        </span>
+                        <span className="text-[11px] text-slate-500 bg-white px-2 py-0.5 rounded-md border font-medium">
+                          {activeCertIndex + 1} of {certificates.length}
+                        </span>
+                        <div className="flex items-center gap-1 ml-1">
+                          <button
+                            onClick={() => setActiveCertIndex((prev) => Math.max(0, prev - 1))}
+                            disabled={activeCertIndex === 0}
+                            className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
+                            title="Previous Candidate"
+                          >
+                            <ChevronLeft size={16} />
+                          </button>
+                          <button
+                            onClick={() => setActiveCertIndex((prev) => Math.min(certificates.length - 1, prev + 1))}
+                            disabled={activeCertIndex === certificates.length - 1}
+                            className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
+                            title="Next Candidate"
+                          >
+                            <ChevronRight size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <CertificateCanvas
+                      event={currentEvent}
+                      cert={activeCert}
+                      onUpdateEvent={handleUpdateEvent}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
+
       </div>
     </div>
   );
