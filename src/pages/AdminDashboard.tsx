@@ -20,14 +20,25 @@ import {
   Loader2, 
   ChevronLeft, 
   ChevronRight, 
-  UserCheck 
+  UserCheck,
+  UserPlus,
+  X,
+  Mail,
+  Building
 } from 'lucide-react';
+
+interface AdminProfile {
+  email: string;
+  role: string;
+  department: string;
+}
 
 export const AdminDashboard: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return sessionStorage.getItem('skuastk_admin_auth') === 'true';
   });
 
+  const [userProfile, setUserProfile] = useState<AdminProfile | null>(null);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [certificates, setCertificates] = useState<IssuedCertificate[]>([]);
@@ -36,20 +47,27 @@ export const AdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [uploadingImage, setUploadingImage] = useState(false);
 
-  // Security Verification Guard
-  const verifyAdminIntegrity = useCallback((): boolean => {
-    const isAuthed = sessionStorage.getItem('skuastk_admin_auth') === 'true';
-    if (!isAuthed) {
+  // Invite Modal States for Super Admin
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteDept, setInviteDept] = useState('');
+  const [inviting, setInviting] = useState(false);
+
+  // Bullet-Proof Guard: Verifies live Supabase Auth JWT Session
+  const verifyLiveSession = useCallback(async (): Promise<string | null> => {
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session?.user) {
+      sessionStorage.removeItem('skuastk_admin_auth');
       setIsAuthenticated(false);
-      alert('Security violation: Unauthorized access attempt detected.');
-      return false;
+      alert('Security session expired or invalid. Please login again.');
+      return null;
     }
-    return true;
+    return session.user.id;
   }, []);
 
   const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];
 
-  // 1. Fetch Events from Supabase
+  // 1. Fetch Events from Supabase (Isolated by RLS)
   const loadEvents = useCallback(async () => {
     setLoading(true);
     const { data: dbEvents, error } = await supabase
@@ -82,7 +100,7 @@ export const AdminDashboard: React.FC = () => {
     setLoading(false);
   }, []);
 
-  // 2. Fetch Certificates for Current Event
+  // 2. Fetch Certificates for Current Event (Isolated by RLS)
   const loadCertificates = useCallback(async (eventId: string) => {
     if (!eventId) {
       setCertificates([]);
@@ -108,11 +126,42 @@ export const AdminDashboard: React.FC = () => {
     }
   }, []);
 
+  // Initial Auth Lifecycle Check
   useEffect(() => {
-    if (isAuthenticated) {
-      loadEvents();
-    }
-  }, [isAuthenticated, loadEvents]);
+    const initAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        sessionStorage.removeItem('skuastk_admin_auth');
+        setIsAuthenticated(false);
+        setLoading(false);
+        return;
+      }
+
+      setIsAuthenticated(true);
+      sessionStorage.setItem('skuastk_admin_auth', 'true');
+
+      // Fetch Profile for Role Based UI
+      const { data: profile } = await supabase
+        .from('admin_profiles')
+        .select('email, role, department')
+        .eq('id', session.user.id)
+        .maybeSingle();
+
+      if (profile) {
+        setUserProfile(profile);
+      } else {
+        setUserProfile({
+          email: session.user.email || 'Admin',
+          role: 'event_admin',
+          department: 'Academic Unit'
+        });
+      }
+
+      await loadEvents();
+    };
+
+    initAuth();
+  }, [loadEvents]);
 
   useEffect(() => {
     if (selectedEventId) {
@@ -122,23 +171,34 @@ export const AdminDashboard: React.FC = () => {
   }, [selectedEventId, loadCertificates]);
 
   if (!isAuthenticated) {
-    return <AdminLogin onAuthenticated={() => setIsAuthenticated(true)} />;
+    return (
+      <AdminLogin 
+        onAuthenticated={() => {
+          setIsAuthenticated(true);
+          sessionStorage.setItem('skuastk_admin_auth', 'true');
+        }} 
+      />
+    );
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     sessionStorage.removeItem('skuastk_admin_auth');
     setIsAuthenticated(false);
+    setUserProfile(null);
+    setEvents([]);
+    setCertificates([]);
   };
 
-  // Helper to generate exact GitHub Pages compatible URL
   const getPublicEventUrl = (event: EventItem) => {
     const baseUrl = window.location.href.split('#')[0].replace(/\/+$/, '');
     return `${baseUrl}/#/event/${event.slug || event.id}`;
   };
 
-  // Create Event in Supabase with Auth Guard
+  // 1. Create Event with Backend User ID Binding
   const handleCreateEvent = async () => {
-    if (!verifyAdminIntegrity()) return;
+    const userId = await verifyLiveSession();
+    if (!userId) return;
 
     const name = prompt('Event Name (e.g. 60th ISAE Annual Convention):');
     if (!name || !name.trim()) return;
@@ -171,6 +231,7 @@ export const AdminDashboard: React.FC = () => {
       security_auth_field: newEv.securityAuthField,
       qr_config: newEv.qrConfig,
       cert_no_config: newEv.certNoConfig,
+      created_by: userId // Links to logged-in user
     });
 
     if (error) {
@@ -181,18 +242,17 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Delete Entire Event with Auth Guard
+  // 2. Delete Entire Event with Live Guard
   const handleDeleteEvent = async (eventId: string, eventName: string) => {
-    if (!verifyAdminIntegrity()) return;
+    const userId = await verifyLiveSession();
+    if (!userId) return;
 
     const confirmDelete = confirm(`Kya aap sach me "${eventName}" event ko delete karna chahte hain?\nIs event ke saare certificates aur uploaded data permanent delete ho jayenge!`);
     if (!confirmDelete) return;
 
-    // 1. Delete associated certificates from Supabase
     await supabase.from('certificates').delete().eq('event_id', eventId);
-
-    // 2. Delete event record
     const { error } = await supabase.from('events').delete().eq('id', eventId);
+
     if (error) {
       alert('Event delete failed: ' + error.message);
       return;
@@ -209,9 +269,10 @@ export const AdminDashboard: React.FC = () => {
     alert(`Event "${eventName}" successfully delete ho gaya!`);
   };
 
-  // Upload Template Image with Auth Guard
+  // 3. Upload Template Image with Live Guard
   const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!verifyAdminIntegrity()) return;
+    const userId = await verifyLiveSession();
+    if (!userId) return;
 
     const file = e.target.files?.[0];
     if (!file || !currentEvent) return;
@@ -235,7 +296,6 @@ export const AdminDashboard: React.FC = () => {
       .getPublicUrl(filePath);
 
     const publicUrl = publicUrlData.publicUrl;
-
     await supabase.from('events').update({ template_url: publicUrl }).eq('id', currentEvent.id);
 
     const updated = { ...currentEvent, templateUrl: publicUrl };
@@ -243,9 +303,10 @@ export const AdminDashboard: React.FC = () => {
     setUploadingImage(false);
   };
 
-  // Sync Layout Changes to Supabase with Auth Guard
+  // 4. Update Event Layout with Live Guard
   const handleUpdateEvent = async (updated: EventItem) => {
-    if (!verifyAdminIntegrity()) return;
+    const userId = await verifyLiveSession();
+    if (!userId) return;
 
     setEvents(events.map((ev) => (ev.id === updated.id ? updated : ev)));
     await supabase.from('events').update({
@@ -257,9 +318,10 @@ export const AdminDashboard: React.FC = () => {
     }).eq('id', updated.id);
   };
 
-  // Upload Excel Batch with Auth Guard
+  // 5. Excel Batch Upload with Live Guard & Batch User Stamp
   const handleExcelParsed = async (records: Record<string, string>[], columns: string[], fileName: string) => {
-    if (!verifyAdminIntegrity() || !currentEvent) return;
+    const userId = await verifyLiveSession();
+    if (!userId || !currentEvent) return;
 
     const batchId = `batch-${Date.now()}`;
     const newBatch: UploadedBatch = {
@@ -312,6 +374,7 @@ export const AdminDashboard: React.FC = () => {
         issue_date: certObj.issue_date,
         status: 'verified',
         data: row,
+        created_by: userId // Bound to current admin
       });
     });
 
@@ -345,13 +408,14 @@ export const AdminDashboard: React.FC = () => {
     alert(`${records.length} Certificates Supabase Cloud me successfully save ho gaye!`);
   };
 
-  // Delete Batch from Database with Auth Guard
+  // 6. Delete Batch with Live Guard
   const handleDeleteBatch = async (batchId: string) => {
-    if (!verifyAdminIntegrity()) return;
+    const userId = await verifyLiveSession();
+    if (!userId) return;
+
     if (!confirm('Batch delete karein? Supabase se bhi saara data remove ho jayega.')) return;
 
     await supabase.from('certificates').delete().eq('batch_id', batchId);
-
     const updatedBatches = currentEvent.batches.filter((b) => b.batchId !== batchId);
     await supabase.from('events').update({ batches: updatedBatches }).eq('id', currentEvent.id);
 
@@ -360,8 +424,42 @@ export const AdminDashboard: React.FC = () => {
     loadCertificates(currentEvent.id);
   };
 
+  // 7. Super Admin Invite Trigger
+  const handleInviteAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteEmail.trim() || !inviteDept.trim()) return;
+
+    setInviting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/invite-admin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          department: inviteDept.trim(),
+          role: 'event_admin'
+        })
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to send invite.');
+
+      alert(result.message || 'Invitation sent successfully!');
+      setInviteEmail('');
+      setInviteDept('');
+      setShowInviteModal(false);
+    } catch (err: any) {
+      alert('Invite error: ' + err.message);
+    } finally {
+      setInviting(false);
+    }
+  };
+
   const handleExportEventExcel = () => {
-    if (!verifyAdminIntegrity()) return;
     if (certificates.length === 0) return alert('Records khali hain!');
     const exportRows = certificates.map((c) => ({
       'Certificate No': c.certificate_no,
@@ -390,21 +488,119 @@ export const AdminDashboard: React.FC = () => {
     <div className="min-h-screen bg-slate-100 p-4 md:p-6 font-sans">
       <div className="max-w-6xl mx-auto space-y-6">
         
-        {/* Header */}
+        {/* University Header with Role & Department Badge */}
         <div style={{ backgroundColor: '#0f5132' }} className="p-6 rounded-2xl text-white shadow-lg flex flex-wrap gap-4 justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold">Sher-e-Kashmir University (SKUAST-K)</h1>
-            <p className="text-xs text-green-200 mt-1">Cloud Digital Certification Engine • Shalimar Campus</p>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold">Sher-e-Kashmir University (SKUAST-K)</h1>
+              {userProfile && (
+                <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${
+                  userProfile.role === 'super_admin' ? 'bg-amber-400 text-slate-950' : 'bg-emerald-800 text-emerald-100 border border-emerald-600'
+                }`}>
+                  {userProfile.role === 'super_admin' ? 'Super Admin' : userProfile.department}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-green-200 mt-1">
+              Logged in as: <span className="font-mono text-white font-semibold">{userProfile?.email || 'Admin'}</span>
+            </p>
           </div>
+          
           <div className="flex items-center gap-2">
-            <button onClick={handleCreateEvent} className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1 cursor-pointer">
+            {userProfile?.role === 'super_admin' && (
+              <button 
+                onClick={() => setShowInviteModal(true)} 
+                className="bg-emerald-800 hover:bg-emerald-700 border border-emerald-600 text-white font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow transition"
+              >
+                <UserPlus size={15} /> + Invite Admin
+              </button>
+            )}
+
+            <button 
+              onClick={handleCreateEvent} 
+              className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1 cursor-pointer shadow transition"
+            >
               <FolderPlus size={16} /> + Create New Event
             </button>
-            <button onClick={handleLogout} className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl text-xs flex items-center gap-1 cursor-pointer font-semibold">
+            
+            <button 
+              onClick={handleLogout} 
+              className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl text-xs flex items-center gap-1 cursor-pointer font-semibold shadow transition"
+            >
               <LogOut size={14} /> Logout
             </button>
           </div>
         </div>
+
+        {/* Super Admin Invite Modal */}
+        {showInviteModal && (
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl border border-gray-200 space-y-4">
+              <div className="flex items-center justify-between border-b pb-3">
+                <div className="flex items-center gap-2">
+                  <UserPlus className="text-emerald-700" size={20} />
+                  <h3 className="text-base font-bold text-gray-900">Invite Department Admin</h3>
+                </div>
+                <button 
+                  onClick={() => setShowInviteModal(false)}
+                  className="text-gray-400 hover:text-gray-700 p-1 rounded-lg cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleInviteAdmin} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Official University Email</label>
+                  <div className="relative">
+                    <Mail size={15} className="absolute left-3 top-3 text-gray-400" />
+                    <input 
+                      type="email"
+                      required
+                      placeholder="hod.dept@skuastkashmir.ac.in"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Assigned Department</label>
+                  <div className="relative">
+                    <Building size={15} className="absolute left-3 top-3 text-gray-400" />
+                    <input 
+                      type="text"
+                      required
+                      placeholder="e.g. Faculty of Horticulture / Agronomy"
+                      value={inviteDept}
+                      onChange={(e) => setInviteDept(e.target.value)}
+                      className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 flex justify-end gap-2">
+                  <button 
+                    type="button"
+                    onClick={() => setShowInviteModal(false)}
+                    className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={inviting}
+                    className="px-5 py-2 text-xs font-bold text-white bg-[#0f5132] hover:bg-emerald-900 rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-60 shadow"
+                  >
+                    {inviting ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+                    <span>{inviting ? 'Sending Invite...' : 'Send Secure Invite'}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="bg-white p-12 rounded-2xl border text-center text-sm font-medium text-gray-500 flex justify-center items-center gap-2">
@@ -412,7 +608,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
         ) : events.length === 0 ? (
           <div className="bg-white p-12 rounded-2xl border text-center space-y-3">
-            <p className="text-gray-600 text-sm">Abhi tak koi event nahi bana hai.</p>
+            <p className="text-gray-600 text-sm">Abhi tak koi event nahi bana hai ya aapko assign nahi kiya gaya hai.</p>
             <button onClick={handleCreateEvent} className="bg-emerald-800 text-white text-xs font-bold px-4 py-2 rounded-xl">
               + Pehla Event Banayein
             </button>
@@ -438,7 +634,6 @@ export const AdminDashboard: React.FC = () => {
                     <span className="text-[10px] opacity-70">({ev.certPrefix})</span>
                   </button>
                   
-                  {/* Event Delete Icon */}
                   <button
                     title={`Delete Event ${ev.name}`}
                     onClick={(e) => {
@@ -591,7 +786,6 @@ export const AdminDashboard: React.FC = () => {
                     <p className="text-[11px] text-gray-500">Coordinate drag karein ya record switch karke template check karein</p>
                   </div>
 
-                  {/* Participant Record Scroller / Navigator */}
                   <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
                     <UserCheck size={15} className="text-emerald-700" />
                     <span className="text-xs font-semibold text-slate-700 font-mono">
