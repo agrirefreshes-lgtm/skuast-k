@@ -37,7 +37,6 @@ interface AdminProfile {
 }
 
 export const AdminDashboard: React.FC = () => {
-  // Always initialize as false so live Supabase auth verification runs first
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [userProfile, setUserProfile] = useState<AdminProfile | null>(null);
   const [adminList, setAdminList] = useState<AdminProfile[]>([]);
@@ -49,7 +48,7 @@ export const AdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [uploadingImage, setUploadingImage] = useState(false);
 
-  // SuperAdmin: Form states to create new Department Admin
+  // SuperAdmin: Form states
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
   const [newAdminDept, setNewAdminDept] = useState('');
@@ -100,7 +99,8 @@ export const AdminDashboard: React.FC = () => {
         securityAuthField: e.security_auth_field || '',
         qrConfig: e.qr_config || { x: 80, y: 74, size: 75, visible: true },
         certNoConfig: e.cert_no_config || { x: 8, y: 92, fontSize: 13, color: '#222222', isBold: false, visible: true },
-      }));
+        isDownloadEnabled: e.is_download_enabled ?? true
+      } as any));
       setEvents(formatted);
       setSelectedEventId(formatted[0].id);
     } else {
@@ -135,7 +135,6 @@ export const AdminDashboard: React.FC = () => {
     }
   }, []);
 
-  // Strict session check on every fresh mount
   useEffect(() => {
     const initAuth = async () => {
       setLoading(true);
@@ -151,7 +150,6 @@ export const AdminDashboard: React.FC = () => {
       setIsAuthenticated(true);
       sessionStorage.setItem('skuastk_admin_auth', 'true');
 
-      // Fetch admin role profile
       const { data: profile } = await supabase
         .from('admin_profiles')
         .select('id, email, role, department')
@@ -209,7 +207,6 @@ export const AdminDashboard: React.FC = () => {
     );
   }
 
-  // SuperAdmin: Handle Direct Creation of Department Admin
   const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormMsg(null);
@@ -236,7 +233,6 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Event Admin Actions:
   const handleCreateEvent = async () => {
     const userId = await verifyLiveSession();
     if (!userId) return;
@@ -258,7 +254,8 @@ export const AdminDashboard: React.FC = () => {
       securityAuthField: '',
       qrConfig: { x: 80, y: 75, size: 75, visible: true },
       certNoConfig: { x: 8, y: 92, fontSize: 13, color: '#222222', isBold: false, visible: true },
-    };
+      isDownloadEnabled: true
+    } as any;
 
     const { error } = await supabase.from('events').insert({
       id: newEv.id,
@@ -272,6 +269,7 @@ export const AdminDashboard: React.FC = () => {
       security_auth_field: newEv.securityAuthField,
       qr_config: newEv.qrConfig,
       cert_no_config: newEv.certNoConfig,
+      is_download_enabled: true,
       created_by: userId
     });
 
@@ -305,6 +303,36 @@ export const AdminDashboard: React.FC = () => {
       setSelectedEventId('');
       setCertificates([]);
     }
+  };
+
+  const handleToggleDownloadAccess = async (eventId: string, currentStatus: boolean) => {
+    const newStatus = !currentStatus;
+    const { error } = await supabase
+      .from('events')
+      .update({ is_download_enabled: newStatus })
+      .eq('id', eventId);
+
+    if (error) {
+      alert('Failed to update download status: ' + error.message);
+      return;
+    }
+
+    setEvents(events.map(ev => ev.id === eventId ? { ...ev, isDownloadEnabled: newStatus } as any : ev));
+  };
+
+  const handleDeleteSingleCertificate = async (certNo: string) => {
+    const userId = await verifyLiveSession();
+    if (!userId) return;
+
+    if (!confirm(`Are you sure you want to delete certificate record ${certNo}?`)) return;
+
+    const { error } = await supabase.from('certificates').delete().eq('certificate_no', certNo);
+    if (error) {
+      alert('Failed to delete certificate: ' + error.message);
+      return;
+    }
+
+    setCertificates(prev => prev.filter(c => c.certificate_no !== certNo));
   };
 
   const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -476,6 +504,7 @@ export const AdminDashboard: React.FC = () => {
   const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];
   const activeCert = certificates[activeCertIndex] || certificates[0];
   const isSuperAdmin = userProfile?.role === 'super_admin';
+  const isCurrentEventDownloadsActive = (currentEvent as any)?.isDownloadEnabled !== false;
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-6 font-sans">
@@ -671,38 +700,55 @@ export const AdminDashboard: React.FC = () => {
             ) : (
               <>
                 {/* Event Selector Tabs */}
-                <div className="flex gap-2 overflow-x-auto pb-1 items-center">
-                  {events.map((ev) => (
-                    <div
-                      key={ev.id}
-                      className={`flex items-center rounded-xl text-xs font-bold transition whitespace-nowrap shadow-sm border ${
-                        selectedEventId === ev.id 
-                          ? 'bg-slate-900 text-white border-slate-900' 
-                          : 'bg-white text-slate-700 hover:bg-slate-100 border-gray-200'
-                      }`}
-                    >
-                      <button
-                        onClick={() => setSelectedEventId(ev.id)}
-                        className="px-3.5 py-2 cursor-pointer flex items-center gap-1.5"
-                      >
-                        <span>{ev.name}</span>
-                        <span className="text-[10px] opacity-70">({ev.certPrefix})</span>
-                      </button>
-                      
-                      <button
-                        title={`Delete Event ${ev.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteEvent(ev.id, ev.name);
-                        }}
-                        className={`px-2 py-2 hover:text-rose-500 transition cursor-pointer border-l ${
-                          selectedEventId === ev.id ? 'border-slate-800 text-slate-400' : 'border-gray-200 text-gray-400'
+                <div className="flex gap-2 overflow-x-auto pb-1 items-center justify-between">
+                  <div className="flex gap-2 overflow-x-auto pb-1 items-center">
+                    {events.map((ev) => (
+                      <div
+                        key={ev.id}
+                        className={`flex items-center rounded-xl text-xs font-bold transition whitespace-nowrap shadow-sm border ${
+                          selectedEventId === ev.id 
+                            ? 'bg-slate-900 text-white border-slate-900' 
+                            : 'bg-white text-slate-700 hover:bg-slate-100 border-gray-200'
                         }`}
                       >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  ))}
+                        <button
+                          onClick={() => setSelectedEventId(ev.id)}
+                          className="px-3.5 py-2 cursor-pointer flex items-center gap-1.5"
+                        >
+                          <span>{ev.name}</span>
+                          <span className="text-[10px] opacity-70">({ev.certPrefix})</span>
+                        </button>
+                        
+                        <button
+                          title={`Delete Event ${ev.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteEvent(ev.id, ev.name);
+                          }}
+                          className={`px-2 py-2 hover:text-rose-500 transition cursor-pointer border-l ${
+                            selectedEventId === ev.id ? 'border-slate-800 text-slate-400' : 'border-gray-200 text-gray-400'
+                          }`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Admin Download Access Pause/Active Toggle Button */}
+                  {currentEvent && (
+                    <button
+                      onClick={() => handleToggleDownloadAccess(currentEvent.id, isCurrentEventDownloadsActive)}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer border shadow-sm shrink-0 transition ${
+                        isCurrentEventDownloadsActive
+                          ? 'bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200'
+                          : 'bg-rose-100 text-rose-900 border-rose-300 hover:bg-rose-200'
+                      }`}
+                      title="Click to toggle public student download access"
+                    >
+                      {isCurrentEventDownloadsActive ? '✓ Downloads Active' : '⏸ Downloads Paused'}
+                    </button>
+                  )}
                 </div>
 
                 {/* Event Public Link */}
@@ -802,7 +848,7 @@ export const AdminDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Upload Batch & Export */}
+                {/* Upload Batch & Export & Individual Certificate Delete */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="bg-white p-5 rounded-2xl border border-gray-200 space-y-2">
                     <h3 className="text-xs font-bold text-gray-800 flex items-center gap-2">
@@ -837,40 +883,50 @@ export const AdminDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Visual Canvas Designer */}
+                {/* Single Certificate Record Management / Delete Module */}
                 {certificates.length > 0 && activeCert && (
                   <div className="bg-white p-5 rounded-2xl border border-gray-200 space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
                       <div>
-                        <h3 className="text-sm font-bold text-gray-800">Visual Coordinate Designer</h3>
-                        <p className="text-[11px] text-gray-500">Coordinate drag karein ya record switch karke template check karein</p>
+                        <h3 className="text-sm font-bold text-gray-800">Visual Coordinate Designer & Record Management</h3>
+                        <p className="text-[11px] text-gray-500">Coordinate drag karein, record switch karein ya single certificate delete karein</p>
                       </div>
 
-                      <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
-                        <UserCheck size={15} className="text-emerald-700" />
-                        <span className="text-xs font-semibold text-slate-700 font-mono">
-                          {activeCert.certificate_no}
-                        </span>
-                        <span className="text-[11px] text-slate-500 bg-white px-2 py-0.5 rounded-md border font-medium">
-                          {activeCertIndex + 1} of {certificates.length}
-                        </span>
-                        <div className="flex items-center gap-1 ml-1">
-                          <button
-                            onClick={() => setActiveCertIndex((prev) => Math.max(0, prev - 1))}
-                            disabled={activeCertIndex === 0}
-                            className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
-                            title="Previous Candidate"
-                          >
-                            <ChevronLeft size={16} />
-                          </button>
-                          <button
-                            onClick={() => setActiveCertIndex((prev) => Math.min(certificates.length - 1, prev + 1))}
-                            disabled={activeCertIndex === certificates.length - 1}
-                            className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
-                            title="Next Candidate"
-                          >
-                            <ChevronRight size={16} />
-                          </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleDeleteSingleCertificate(activeCert.certificate_no)}
+                          className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                          title="Delete this individual certificate record"
+                        >
+                          <Trash2 size={14} /> Delete Record ({activeCert.certificate_no})
+                        </button>
+
+                        <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                          <UserCheck size={15} className="text-emerald-700" />
+                          <span className="text-xs font-semibold text-slate-700 font-mono">
+                            {activeCert.certificate_no}
+                          </span>
+                          <span className="text-[11px] text-slate-500 bg-white px-2 py-0.5 rounded-md border font-medium">
+                            {activeCertIndex + 1} of {certificates.length}
+                          </span>
+                          <div className="flex items-center gap-1 ml-1">
+                            <button
+                              onClick={() => setActiveCertIndex((prev) => Math.max(0, prev - 1))}
+                              disabled={activeCertIndex === 0}
+                              className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
+                              title="Previous Candidate"
+                            >
+                              <ChevronLeft size={16} />
+                            </button>
+                            <button
+                              onClick={() => setActiveCertIndex((prev) => Math.min(certificates.length - 1, prev + 1))}
+                              disabled={activeCertIndex === certificates.length - 1}
+                              className="p-1 rounded bg-white hover:bg-slate-200 disabled:opacity-30 cursor-pointer text-slate-700 transition"
+                              title="Next Candidate"
+                            >
+                              <ChevronRight size={16} />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
