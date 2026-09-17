@@ -15,6 +15,7 @@ export interface DynamicFieldDef {
   lineHeight: number;
   maxLines?: number;
   visible: boolean;
+  isLocked?: boolean; // Layer lock toggle feature
 }
 
 export interface UploadedBatch {
@@ -22,6 +23,24 @@ export interface UploadedBatch {
   fileName: string;
   uploadedAt: string;
   count: number;
+}
+
+export interface QRConfig {
+  x: number;
+  y: number;
+  size: number;
+  visible: boolean;
+  isLocked?: boolean; // QR layer lock toggle feature
+}
+
+export interface CertNoConfig {
+  x: number;
+  y: number;
+  fontSize: number;
+  color: string;
+  isBold: boolean;
+  visible: boolean;
+  isLocked?: boolean; // Cert No layer lock toggle feature
 }
 
 export interface EventItem {
@@ -34,20 +53,9 @@ export interface EventItem {
   batches: UploadedBatch[];
   primaryAuthField: string;
   securityAuthField: string;
-  qrConfig: {
-    x: number;
-    y: number;
-    size: number;
-    visible: boolean;
-  };
-  certNoConfig: {
-    x: number;
-    y: number;
-    fontSize: number;
-    color: string;
-    isBold: boolean;
-    visible: boolean;
-  };
+  qrConfig: QRConfig;
+  certNoConfig: CertNoConfig;
+  created_at?: string;
 }
 
 export interface IssuedCertificate {
