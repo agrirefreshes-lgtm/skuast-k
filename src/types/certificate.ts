@@ -15,7 +15,9 @@ export interface DynamicFieldDef {
   lineHeight: number;
   maxLines?: number;
   visible: boolean;
-  isLocked?: boolean; // Layer lock toggle feature
+  isLocked?: boolean;
+  letterSpacing?: number;
+  rotation?: number;
 }
 
 export interface UploadedBatch {

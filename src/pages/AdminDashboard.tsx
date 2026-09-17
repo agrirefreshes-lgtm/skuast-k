@@ -429,8 +429,17 @@ export const AdminDashboard: React.FC = () => {
     const dbCertsToInsert: any[] = [];
     const localNewCerts: IssuedCertificate[] = [];
 
-    records.forEach((row, idx) => {
-      const serialNumber = `${currentEvent.certPrefix}${String(startSerial + idx).padStart(4, '0')}`;
+    const generateRandomId = () => {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let result = '';
+      for (let i = 0; i < 6; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return result;
+    };
+
+    records.forEach((row) => {
+      const serialNumber = `${currentEvent.certPrefix}${generateRandomId()}`;
       const certObj: IssuedCertificate = {
         certificate_no: serialNumber,
         event_id: currentEvent.id,
@@ -752,14 +761,14 @@ export const AdminDashboard: React.FC = () => {
                   {currentEvent && (
                     <button
                       onClick={() => handleToggleDownloadAccess(currentEvent.id, isCurrentEventDownloadsActive)}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer border shadow-sm shrink-0 transition ${
+                      className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer border shadow-sm shrink-0 transition ${
                         isCurrentEventDownloadsActive
-                          ? 'bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200'
-                          : 'bg-rose-100 text-rose-900 border-rose-300 hover:bg-rose-200'
+                          ? 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-500 shadow-emerald-500/20'
+                          : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
                       }`}
                       title="Click to toggle public student download access"
                     >
-                      {isCurrentEventDownloadsActive ? '✓ Downloads Active' : '⏸ Downloads Paused'}
+                      {isCurrentEventDownloadsActive ? '✓ Finalized (Live to Students)' : '⏸ Draft Preview (Publish)'}
                     </button>
                   )}
                 </div>
@@ -825,16 +834,32 @@ export const AdminDashboard: React.FC = () => {
 
                 {/* Template & Field Visibility */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-2">
-                    <h3 className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
-                      <ImagePlus size={16} className="text-emerald-700" /> Template Image (Cloud)
-                    </h3>
-                    <label className="border border-dashed border-gray-300 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer hover:border-emerald-700 bg-gray-50">
-                      <span className="text-[11px] text-gray-600 font-medium">
-                        {uploadingImage ? 'Uploading to Supabase...' : 'Upload Template (PNG/JPG)'}
-                      </span>
-                      <input type="file" accept="image/*" disabled={uploadingImage} onChange={handleTemplateUpload} className="hidden" />
-                    </label>
+                  <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-2 flex flex-col justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-800 flex items-center gap-1.5 mb-2">
+                        <ImagePlus size={16} className="text-emerald-700" /> Template Format (Cloud)
+                      </h3>
+                      <label className="border border-dashed border-gray-300 rounded-lg p-3 flex flex-col items-center justify-center cursor-pointer hover:border-emerald-700 bg-gray-50">
+                        <span className="text-[11px] text-gray-600 font-medium">
+                          {uploadingImage ? 'Uploading to Supabase...' : 'Upload New Template (PNG/JPG)'}
+                        </span>
+                        <input type="file" accept="image/*" disabled={uploadingImage} onChange={handleTemplateUpload} className="hidden" />
+                      </label>
+                    </div>
+                    {currentEvent.templateUrl && !currentEvent.templateUrl.includes('dummyimage') && (
+                      <button
+                        onClick={async () => {
+                          if (confirm('Are you sure you want to delete this template format? Candidates will see a blank format.')) {
+                            const updated = { ...currentEvent, templateUrl: 'https://dummyimage.com/1920x1080/0f5132/ffffff&text=Upload+Template' };
+                            await supabase.from('events').update({ template_url: updated.templateUrl }).eq('id', currentEvent.id);
+                            setEvents(events.map(ev => ev.id === currentEvent.id ? updated : ev));
+                          }
+                        }}
+                        className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition cursor-pointer shadow-sm"
+                      >
+                        <Trash2 size={14} /> Remove Current Template
+                      </button>
+                    )}
                   </div>
 
                   <div className="bg-white p-4 rounded-2xl border border-gray-200 space-y-2 md:col-span-2">
