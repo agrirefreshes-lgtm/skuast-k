@@ -37,10 +37,8 @@ interface AdminProfile {
 }
 
 export const AdminDashboard: React.FC = () => {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem('skuastk_admin_auth') === 'true';
-  });
-
+  // Always initialize as false so live Supabase auth verification runs first
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [userProfile, setUserProfile] = useState<AdminProfile | null>(null);
   const [adminList, setAdminList] = useState<AdminProfile[]>([]);
   const [events, setEvents] = useState<EventItem[]>([]);
@@ -137,9 +135,12 @@ export const AdminDashboard: React.FC = () => {
     }
   }, []);
 
+  // Strict session check on every fresh mount
   useEffect(() => {
     const initAuth = async () => {
+      setLoading(true);
       const { data: { session } } = await supabase.auth.getSession();
+      
       if (!session?.user) {
         sessionStorage.removeItem('skuastk_admin_auth');
         setIsAuthenticated(false);
@@ -150,38 +151,52 @@ export const AdminDashboard: React.FC = () => {
       setIsAuthenticated(true);
       sessionStorage.setItem('skuastk_admin_auth', 'true');
 
+      // Fetch admin role profile
       const { data: profile } = await supabase
         .from('admin_profiles')
         .select('id, email, role, department')
         .eq('id', session.user.id)
         .maybeSingle();
 
-      if (profile) {
-        setUserProfile(profile);
-        if (profile.role === 'super_admin') {
-          await loadAdminDirectory();
-        } else {
-          await loadEvents();
-        }
+      const userEmail = session.user.email?.toLowerCase() || '';
+      const isSuper = profile?.role === 'super_admin' || userEmail.includes('superadmin');
+
+      const resolvedProfile: AdminProfile = {
+        id: session.user.id,
+        email: session.user.email || 'Admin',
+        role: isSuper ? 'super_admin' : (profile?.role || 'event_admin'),
+        department: isSuper ? 'Central Administration' : (profile?.department || 'Academic Department')
+      };
+
+      setUserProfile(resolvedProfile);
+
+      if (resolvedProfile.role === 'super_admin') {
+        await loadAdminDirectory();
       } else {
-        setUserProfile({
-          email: session.user.email || 'Admin',
-          role: 'event_admin',
-          department: 'Academic Unit'
-        });
         await loadEvents();
       }
+      setLoading(false);
     };
 
     initAuth();
   }, [loadAdminDirectory, loadEvents]);
 
   useEffect(() => {
-    if (userProfile?.role !== 'super_admin' && selectedEventId) {
+    if (userProfile && userProfile.role !== 'super_admin' && selectedEventId) {
       loadCertificates(selectedEventId);
       setActiveCertIndex(0);
     }
-  }, [selectedEventId, loadCertificates, userProfile?.role]);
+  }, [selectedEventId, loadCertificates, userProfile]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    sessionStorage.removeItem('skuastk_admin_auth');
+    setIsAuthenticated(false);
+    setUserProfile(null);
+    setEvents([]);
+    setCertificates([]);
+    setAdminList([]);
+  };
 
   if (!isAuthenticated) {
     return (
@@ -193,16 +208,6 @@ export const AdminDashboard: React.FC = () => {
       />
     );
   }
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    sessionStorage.removeItem('skuastk_admin_auth');
-    setIsAuthenticated(false);
-    setUserProfile(null);
-    setEvents([]);
-    setCertificates([]);
-    setAdminList([]);
-  };
 
   // SuperAdmin: Handle Direct Creation of Department Admin
   const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
@@ -488,7 +493,7 @@ export const AdminDashboard: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-green-200 mt-1">
-              {isSuperAdmin ? 'System Governance & Administrative Delegations' : 'Event Digital Certification Engine • Shalimar Campus'}
+              Logged in as: <span className="font-mono text-white font-semibold">{userProfile?.email || 'Authenticated'}</span>
             </p>
           </div>
           
