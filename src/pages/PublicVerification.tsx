@@ -260,7 +260,7 @@ export const PublicVerification: React.FC = () => {
         ) : hasSearched ? (
           <div className="text-center py-6 space-y-2 border-t">
             <XCircle size={36} className="text-rose-600 mx-auto" />
-            <h3 className="text-sm font-bold text-gray-900">Certificate Not Found</h3>
+            <h3 className="text-sm font-bold text-gray-900">Data Not Matched</h3>
             <p className="text-xs text-gray-500 max-w-xs mx-auto">
               No official record found for certificate "{inputCertNo}". Please verify and re-scan.
             </p>

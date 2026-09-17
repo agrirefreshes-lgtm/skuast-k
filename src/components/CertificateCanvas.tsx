@@ -357,145 +357,197 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
           </div>
 
           {/* Ribbon Controls For Selected Field */}
-          {selectedField && (
+          {(selectedField || selectedElementKey === '__cert_no__' || selectedElementKey === '__qr_code__') && (
             <div className="px-4 py-3 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
               <div className="flex flex-wrap items-center gap-2.5">
                 
-                {/* Font Selector */}
-                <div className="flex items-center bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700">
-                  <Type size={15} className="text-emerald-400 mr-1.5" />
-                  <select
-                    value={selectedField.fontFamily || 'Georgia, serif'}
-                    onChange={(e) => updateSelectedField({ fontFamily: e.target.value })}
-                    className="bg-transparent text-white text-xs font-semibold focus:outline-none cursor-pointer"
-                  >
-                    {CERT_FONTS.map(f => (
-                      <option key={f.value} value={f.value} className="bg-slate-900 text-white">
-                        {f.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {/* Font Selector (Only for Text Fields) */}
+                {selectedField && (
+                  <div className="flex items-center bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700">
+                    <Type size={15} className="text-emerald-400 mr-1.5" />
+                    <select
+                      value={selectedField.fontFamily || 'Georgia, serif'}
+                      onChange={(e) => updateSelectedField({ fontFamily: e.target.value })}
+                      className="bg-transparent text-white text-xs font-semibold focus:outline-none cursor-pointer"
+                    >
+                      {CERT_FONTS.map(f => (
+                        <option key={f.value} value={f.value} className="bg-slate-900 text-white">
+                          {f.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
-                {/* Font Size Steppers */}
+                {/* Size Steppers (For Text, Cert No, and QR Code) */}
                 <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
                   <button
                     type="button"
-                    onClick={() => updateSelectedField({ fontSize: Math.max(9, (selectedField.fontSize || 18) - 1) })}
+                    onClick={() => {
+                      if (selectedField) updateSelectedField({ fontSize: Math.max(9, (selectedField.fontSize || 18) - 1) });
+                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, fontSize: Math.max(9, (event.certNoConfig.fontSize || 14) - 1) } });
+                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, size: Math.max(20, (event.qrConfig.size || 80) - 2) } });
+                    }}
                     className="px-3 py-1.5 hover:bg-slate-800 text-white font-bold text-sm"
                   >
                     -
                   </button>
                   <span className="px-2 text-amber-400 font-mono font-black text-xs min-w-[3rem] text-center">
-                    {selectedField.fontSize || 18}px
+                    {selectedField ? `${selectedField.fontSize || 18}px` : selectedElementKey === '__cert_no__' ? `${event.certNoConfig.fontSize || 14}px` : `${event.qrConfig.size || 80}px`}
                   </span>
                   <button
                     type="button"
-                    onClick={() => updateSelectedField({ fontSize: (selectedField.fontSize || 18) + 1 })}
+                    onClick={() => {
+                      if (selectedField) updateSelectedField({ fontSize: (selectedField.fontSize || 18) + 1 });
+                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, fontSize: (event.certNoConfig.fontSize || 14) + 1 } });
+                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, size: (event.qrConfig.size || 80) + 2 } });
+                    }}
                     className="px-3 py-1.5 hover:bg-slate-800 text-white font-bold text-sm"
                   >
                     +
                   </button>
                 </div>
 
-                {/* Center Helpers */}
+                {/* Center Helpers (For all) */}
                 <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 p-1 gap-1">
                   <button
                     type="button"
-                    onClick={() => updateSelectedField({ x: 50 })}
+                    onClick={() => {
+                      if (selectedField) updateSelectedField({ x: 50 });
+                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x: 50 } });
+                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, x: 50 } });
+                    }}
                     className="px-2.5 py-1 hover:bg-slate-800 rounded-lg text-slate-200 hover:text-amber-400 font-bold text-[11px] flex items-center gap-1"
                   >
                     <AlignCenterHorizontal size={14} /> Center X
                   </button>
                   <button
                     type="button"
-                    onClick={() => updateSelectedField({ y: 50 })}
+                    onClick={() => {
+                      if (selectedField) updateSelectedField({ y: 50 });
+                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, y: 50 } });
+                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, y: 50 } });
+                    }}
                     className="px-2.5 py-1 hover:bg-slate-800 rounded-lg text-slate-200 hover:text-amber-400 font-bold text-[11px] flex items-center gap-1"
                   >
                     <AlignCenterVertical size={14} /> Center Y
                   </button>
                 </div>
 
-                {/* Bold & Italic */}
-                <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 p-1 gap-1">
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedField({ isBold: !selectedField.isBold })}
-                    className={`px-3 py-1 rounded-lg font-black ${selectedField.isBold ? 'bg-amber-400 text-slate-950' : 'text-slate-300'}`}
-                  >
-                    <Bold size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedField({ isItalic: !selectedField.isItalic })}
-                    className={`px-3 py-1 rounded-lg ${selectedField.isItalic ? 'bg-amber-400 text-slate-950' : 'text-slate-300'}`}
-                  >
-                    <Italic size={14} />
-                  </button>
-                </div>
+                {/* Bold & Italic (Only Text and Cert No) */}
+                {(selectedField || selectedElementKey === '__cert_no__') && (
+                  <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 p-1 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedField) updateSelectedField({ isBold: !selectedField.isBold });
+                        else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, isBold: !event.certNoConfig.isBold } });
+                      }}
+                      className={`px-3 py-1 rounded-lg font-black ${
+                        (selectedField && selectedField.isBold) || (selectedElementKey === '__cert_no__' && event.certNoConfig.isBold)
+                          ? 'bg-amber-400 text-slate-950'
+                          : 'text-slate-300'
+                      }`}
+                    >
+                      <Bold size={14} />
+                    </button>
+                    {selectedField && (
+                      <button
+                        type="button"
+                        onClick={() => updateSelectedField({ isItalic: !selectedField.isItalic })}
+                        className={`px-3 py-1 rounded-lg ${selectedField.isItalic ? 'bg-amber-400 text-slate-950' : 'text-slate-300'}`}
+                      >
+                        <Italic size={14} />
+                      </button>
+                    )}
+                  </div>
+                )}
 
-                {/* Align */}
-                <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 p-1 gap-1">
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedField({ align: 'left' })}
-                    className={`p-1.5 rounded-lg ${selectedField.align === 'left' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
-                  >
-                    <AlignLeft size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedField({ align: 'center' })}
-                    className={`p-1.5 rounded-lg ${selectedField.align === 'center' || !selectedField.align ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
-                  >
-                    <AlignCenter size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateSelectedField({ align: 'right' })}
-                    className={`p-1.5 rounded-lg ${selectedField.align === 'right' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
-                  >
-                    <AlignRight size={14} />
-                  </button>
-                </div>
+                {/* Align (Only Text Fields) */}
+                {selectedField && (
+                  <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 p-1 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedField({ align: 'left' })}
+                      className={`p-1.5 rounded-lg ${selectedField.align === 'left' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
+                    >
+                      <AlignLeft size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedField({ align: 'center' })}
+                      className={`p-1.5 rounded-lg ${selectedField.align === 'center' || !selectedField.align ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
+                    >
+                      <AlignCenter size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedField({ align: 'right' })}
+                      className={`p-1.5 rounded-lg ${selectedField.align === 'right' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
+                    >
+                      <AlignRight size={14} />
+                    </button>
+                  </div>
+                )}
 
-                {/* Color */}
-                <label className="flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700 cursor-pointer">
-                  <Palette size={15} className="text-amber-400" />
-                  <input
-                    type="color"
-                    value={selectedField.color || '#111827'}
-                    onChange={(e) => updateSelectedField({ color: e.target.value })}
-                    className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0"
-                  />
-                </label>
+                {/* Color (Text and Cert No) */}
+                {(selectedField || selectedElementKey === '__cert_no__') && (
+                  <label className="flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700 cursor-pointer">
+                    <Palette size={15} className="text-amber-400" />
+                    <input
+                      type="color"
+                      value={selectedField ? (selectedField.color || '#111827') : (event.certNoConfig.color || '#111827')}
+                      onChange={(e) => {
+                        if (selectedField) updateSelectedField({ color: e.target.value });
+                        else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, color: e.target.value } });
+                      }}
+                      className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0"
+                    />
+                  </label>
+                )}
 
-                {/* Nudge D-Pad */}
+                {/* Nudge D-Pad (For all) */}
                 <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-xl border border-slate-700">
                   <button
                     type="button"
-                    onClick={() => updateSelectedField({ x: Math.max(0, Number((selectedField.x - 0.2).toFixed(2))) })}
+                    onClick={() => {
+                      if (selectedField) updateSelectedField({ x: Math.max(0, Number((selectedField.x - 0.2).toFixed(2))) });
+                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x: Math.max(0, Number((event.certNoConfig.x - 0.2).toFixed(2))) } });
+                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, x: Math.max(0, Number((event.qrConfig.x - 0.2).toFixed(2))) } });
+                    }}
                     className="p-1 text-slate-300 hover:text-white"
                   >
                     <ArrowLeft size={14} />
                   </button>
                   <button
                     type="button"
-                    onClick={() => updateSelectedField({ y: Math.max(0, Number((selectedField.y - 0.2).toFixed(2))) })}
+                    onClick={() => {
+                      if (selectedField) updateSelectedField({ y: Math.max(0, Number((selectedField.y - 0.2).toFixed(2))) });
+                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, y: Math.max(0, Number((event.certNoConfig.y - 0.2).toFixed(2))) } });
+                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, y: Math.max(0, Number((event.qrConfig.y - 0.2).toFixed(2))) } });
+                    }}
                     className="p-1 text-slate-300 hover:text-white"
                   >
                     <ArrowUp size={14} />
                   </button>
                   <button
                     type="button"
-                    onClick={() => updateSelectedField({ y: Math.min(100, Number((selectedField.y + 0.2).toFixed(2))) })}
+                    onClick={() => {
+                      if (selectedField) updateSelectedField({ y: Math.min(100, Number((selectedField.y + 0.2).toFixed(2))) });
+                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, y: Math.min(100, Number((event.certNoConfig.y + 0.2).toFixed(2))) } });
+                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, y: Math.min(100, Number((event.qrConfig.y + 0.2).toFixed(2))) } });
+                    }}
                     className="p-1 text-slate-300 hover:text-white"
                   >
                     <ArrowDown size={14} />
                   </button>
                   <button
                     type="button"
-                    onClick={() => updateSelectedField({ x: Math.min(100, Number((selectedField.x + 0.2).toFixed(2))) })}
+                    onClick={() => {
+                      if (selectedField) updateSelectedField({ x: Math.min(100, Number((selectedField.x + 0.2).toFixed(2))) });
+                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x: Math.min(100, Number((event.certNoConfig.x + 0.2).toFixed(2))) } });
+                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, x: Math.min(100, Number((event.qrConfig.x + 0.2).toFixed(2))) } });
+                    }}
                     className="p-1 text-slate-300 hover:text-white"
                   >
                     <ArrowRight size={14} />
