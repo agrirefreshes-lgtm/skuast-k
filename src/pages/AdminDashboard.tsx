@@ -425,7 +425,6 @@ export const AdminDashboard: React.FC = () => {
       }));
     }
 
-    const startSerial = certificates.length + 1;
     const dbCertsToInsert: any[] = [];
     const localNewCerts: IssuedCertificate[] = [];
 
