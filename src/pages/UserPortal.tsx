@@ -1,53 +1,41 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
-import type { EventItem, IssuedCertificate } from '../types/certificate';
 import { CertificateCanvas } from '../components/CertificateCanvas';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
+import type { EventItem, IssuedCertificate } from '../types/certificate';
 import { 
-  Award, 
-  Calendar, 
-  ChevronRight, 
-  FolderCheck, 
   ShieldCheck, 
-  Download, 
+  Search, 
+  AlertCircle, 
   Loader2, 
-  ArrowLeft, 
-  Lock, 
-  UserCheck,
-  Search
+  Building, 
+  Lock,
+  PauseCircle,
+  FileCheck
 } from 'lucide-react';
 
-interface GroupedEvents {
-  [year: string]: {
-    [month: string]: EventItem[];
-  };
-}
-
 export const UserPortal: React.FC = () => {
+  const { eventSlug } = useParams<{ eventSlug?: string }>();
+
   const [events, setEvents] = useState<EventItem[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [selectedEventId, setSelectedEventId] = useState<string>('');
+  const [loadingEvents, setLoadingEvents] = useState<boolean>(true);
 
-  // 2-Factor Form inputs
-  const [primaryVal, setPrimaryVal] = useState('');
-  const [securityVal, setSecurityVal] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [authenticating, setAuthenticating] = useState(false);
+  // Form Inputs
+  const [primaryInput, setPrimaryInput] = useState<string>('');
+  const [securityInput, setSecurityInput] = useState<string>('');
+  const [verifying, setVerifying] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Authenticated Participant Certificate
-  const [matchedCert, setMatchedCert] = useState<IssuedCertificate | null>(null);
-  const [downloading, setDownloading] = useState(false);
+  // Matched Data
+  const [activeCert, setActiveCert] = useState<IssuedCertificate | null>(null);
+  const [activeEvent, setActiveEvent] = useState<EventItem | null>(null);
 
+  // Load events
   useEffect(() => {
     const fetchEvents = async () => {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('events')
-        .select('*')
-        .order('created_at', { ascending: false });
-
+      setLoadingEvents(true);
+      const { data, error } = await supabase.from('events').select('*');
       if (!error && data) {
         const formatted: EventItem[] = data.map((e: any) => ({
           id: e.id,
@@ -57,384 +45,240 @@ export const UserPortal: React.FC = () => {
           templateUrl: e.template_url,
           fields: e.fields || [],
           batches: e.batches || [],
-          primaryAuthField: e.primary_auth_field || '',
-          securityAuthField: e.security_auth_field || '',
-          qrConfig: e.qr_config || { x: 80, y: 74, size: 75, visible: true },
+          primaryAuthField: e.primary_auth_field || 'Student Name',
+          securityAuthField: e.security_auth_field || 'Student Name',
+          qrConfig: e.qr_config || { x: 80, y: 75, size: 75, visible: true },
           certNoConfig: e.cert_no_config || { x: 8, y: 92, fontSize: 13, color: '#222222', isBold: false, visible: true },
-        }));
+          isDownloadEnabled: e.is_download_enabled ?? true
+        } as any));
+
         setEvents(formatted);
+
+        if (eventSlug) {
+          const matched = formatted.find(ev => ev.slug === eventSlug || ev.id === eventSlug);
+          if (matched) setSelectedEventId(matched.id);
+          else if (formatted.length > 0) setSelectedEventId(formatted[0].id);
+        } else if (formatted.length > 0) {
+          setSelectedEventId(formatted[0].id);
+        }
       }
-      setLoading(false);
+      setLoadingEvents(false);
     };
 
     fetchEvents();
-  }, []);
+  }, [eventSlug]);
 
-  const groupedEvents = useMemo(() => {
-    const filtered = events.filter((ev) => 
-      ev.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ev.certPrefix.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+  const currentEvent = events.find(e => e.id === selectedEventId) || events[0];
+  const isDownloadsActive = (currentEvent as any)?.isDownloadEnabled !== false;
 
-    const grouped: GroupedEvents = {};
-    filtered.forEach((item) => {
-      const year = '2026';
-      const month = 'Conferences & Conventions';
-
-      if (!grouped[year]) grouped[year] = {};
-      if (!grouped[year][month]) grouped[year][month] = [];
-      grouped[year][month].push(item);
-    });
-
-    return grouped;
-  }, [events, searchQuery]);
-
-  const handleSelectEvent = (event: EventItem) => {
-    setSelectedEvent(event);
-    setMatchedCert(null);
-    setPrimaryVal('');
-    setSecurityVal('');
-    setAuthError('');
-  };
-
-  const handle2FactorVerify = async (e: React.FormEvent) => {
+  const handleAuthenticate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedEvent || !primaryVal.trim() || !securityVal.trim()) return;
+    if (!currentEvent) return;
 
-    setAuthenticating(true);
-    setAuthError('');
-
-    const pKey = selectedEvent.primaryAuthField;
-    const sKey = selectedEvent.securityAuthField;
-
-    // Secure Query: Sirf exact match wala single record mangwaya taaki DevTools se poora dump leak na ho
-    const { data: certList, error } = await supabase
-      .from('certificates')
-      .select('certificate_no, event_id, event_name, issue_date, status, data')
-      .eq('event_id', selectedEvent.id)
-      .filter(`data->>${pKey}`, 'eq', primaryVal.trim())
-      .filter(`data->>${sKey}`, 'eq', securityVal.trim())
-      .limit(1);
-
-    setAuthenticating(false);
-
-    if (error) {
-      setAuthError('Verification check failed. Please check network connection.');
-      return;
-    }
-
-    if (certList && certList.length > 0) {
-      const match = certList[0];
-      setMatchedCert({
-        certificate_no: match.certificate_no,
-        event_id: match.event_id,
-        event_name: match.event_name,
-        issue_date: match.issue_date,
-        status: match.status,
-        data: match.data,
-      });
-    } else {
-      setAuthError(`Credentials match nahi hua. Please verify "${pKey}" & "${sKey}".`);
-    }
-  };
-
-  const toDataURL = async (url: string): Promise<string> => {
-    try {
-      const response = await fetch(url, { cache: 'no-cache' });
-      const blob = await response.blob();
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    } catch {
-      return url;
-    }
-  };
-
-  const handleDownloadPDF = async () => {
-    const printArea = document.getElementById('certificate-print-area') as HTMLDivElement | null;
-    if (!printArea || !matchedCert || !selectedEvent) {
-      alert('Certificate area ready nahi hai. Kripya page refresh karke dobara check karein.');
-      return;
-    }
-
-    setDownloading(true);
-    const originalBg = printArea.style.backgroundImage;
+    setErrorMsg(null);
+    setActiveCert(null);
+    setVerifying(true);
 
     try {
-      if (selectedEvent.templateUrl) {
-        const safeBase64 = await toDataURL(selectedEvent.templateUrl);
-        printArea.style.backgroundImage = `url("${safeBase64}")`;
+      // 1. Check if downloads are paused by admin
+      if (!isDownloadsActive) {
+        throw new Error('Certificates download for this event is temporarily paused by department administrator.');
       }
 
-      await document.fonts.ready;
-      await new Promise((res) => setTimeout(res, 200));
+      const cleanPrimary = primaryInput.trim().toLowerCase();
+      const cleanSecurity = securityInput.trim().toLowerCase();
+      const primaryKey = currentEvent.primaryAuthField || 'Student Name';
+      const securityKey = currentEvent.securityAuthField || 'Student Name';
 
-      const canvas = await html2canvas(printArea, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: false,
-        logging: false,
-        backgroundColor: '#ffffff',
-        imageTimeout: 20000,
-        onclone: (clonedDoc) => {
-          // Universal modern CSS color filter (oklab, oklch, lab, color(srgb))
-          const modernColorRegex = /(oklab|oklch|lab|color\(srgb)/i;
-          const allNodes = clonedDoc.querySelectorAll('*');
+      // 2. Fetch all certificates for this event from Supabase safely
+      const { data: certsData, error: certsErr } = await supabase
+        .from('certificates')
+        .select('*')
+        .eq('event_id', currentEvent.id);
 
-          allNodes.forEach((node) => {
-            const htmlEl = node as HTMLElement;
-            const style = window.getComputedStyle(htmlEl);
-            
-            if (modernColorRegex.test(style.color)) {
-              htmlEl.style.color = '#111827';
-            }
-            if (modernColorRegex.test(style.backgroundColor)) {
-              htmlEl.style.backgroundColor = 'transparent';
-            }
-            if (modernColorRegex.test(style.borderColor)) {
-              htmlEl.style.borderColor = 'transparent';
-            }
-          });
+      if (certsErr) throw certsErr;
+      if (!certsData || certsData.length === 0) {
+        throw new Error('Is event ke liye abhi koi certificates upload nahi kiye gaye hain.');
+      }
 
-          // Strict transparent background for child text divs (No grey shade)
-          const targetArea = clonedDoc.getElementById('certificate-print-area');
-          if (targetArea) {
-            const childDivs = targetArea.querySelectorAll('div');
-            childDivs.forEach((child) => {
-              const el = child as HTMLElement;
-              if (!el.classList.contains('bg-white')) {
-                el.style.backgroundColor = 'transparent';
-                el.style.boxShadow = 'none';
-              }
-            });
-          }
-        }
+      // 3. Client-side robust matching (Handles same fields, case-insensitive, spaces)
+      const matchedRow = certsData.find((c: any) => {
+        const recordData = c.data || {};
+        
+        // Find values dynamically across possible key variations
+        const pVal = String(recordData[primaryKey] || recordData['Student Name'] || recordData['Name'] || '').trim().toLowerCase();
+        const sVal = String(recordData[securityKey] || recordData['Student Name'] || recordData['Registration No'] || recordData['Mobile'] || '').trim().toLowerCase();
+
+        const isPrimaryMatch = pVal === cleanPrimary;
+        const isSecurityMatch = (primaryKey === securityKey) || (sVal === cleanSecurity) || (cleanSecurity === '');
+
+        return isPrimaryMatch && isSecurityMatch;
       });
 
-      const imgData = canvas.toDataURL('image/png', 1.0);
+      if (!matchedRow) {
+        throw new Error('Aapke daale gaye details se koi certificate match nahi hua. Kripya details check karein.');
+      }
 
-      const pdf = new jsPDF({
-        orientation: 'landscape',
-        unit: 'px',
-        format: [canvas.width, canvas.height],
-      });
+      const formattedCert: IssuedCertificate = {
+        certificate_no: matchedRow.certificate_no,
+        event_id: matchedRow.event_id,
+        event_name: matchedRow.event_name,
+        batchId: matchedRow.batch_id,
+        issue_date: matchedRow.issue_date,
+        status: matchedRow.status,
+        data: matchedRow.data
+      };
 
-      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-      const cleanFileName = (matchedCert.certificate_no || 'Certificate').replace(/[^a-zA-Z0-9_-]/g, '_');
-      pdf.save(`${cleanFileName}.pdf`);
+      setActiveCert(formattedCert);
+      setActiveEvent(currentEvent);
     } catch (err: any) {
-      console.error('PDF Generation Error:', err);
-      alert('Certificate download fail ho gaya: ' + (err.message || 'Rendering error'));
+      setErrorMsg(err.message || 'Certificate search failed.');
     } finally {
-      if (printArea) {
-        printArea.style.backgroundImage = originalBg;
-      }
-      setDownloading(false);
+      setVerifying(false);
     }
   };
 
   return (
-    <div className="min-h-[calc(100vh-140px)] py-10 px-4 md:px-8 font-sans">
-      <div className="max-w-5xl mx-auto space-y-8">
-        
-        {/* University Hero Header */}
-        <div className="bg-gradient-to-r from-[#0f5132] to-emerald-900 rounded-3xl p-6 md:p-10 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="space-y-2 text-center md:text-left">
-            <span className="text-[11px] font-black uppercase tracking-widest bg-amber-400 text-slate-950 px-3 py-1 rounded-full inline-block shadow-sm">
-              Official University Certification Registry
-            </span>
-            <h1 className="text-2xl md:text-3xl font-black font-serif">
-              Download Your Academic & Event Certificate
-            </h1>
-            <p className="text-xs md:text-sm text-emerald-200 max-w-xl font-medium">
-              If you participated in any official SKUAST-Kashmir conference, symposium, workshop, or convention, select your event below to securely download your verified credential.
-            </p>
+    <div className="min-h-screen bg-slate-100 py-8 px-4 font-sans">
+      <div className="max-w-4xl mx-auto space-y-6">
+
+        {/* Header Ribbon */}
+        <div style={{ backgroundColor: '#0f5132' }} className="p-6 rounded-3xl text-white shadow-xl flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Building size={20} className="text-amber-400" />
+              <h1 className="text-xl font-bold">Sher-e-Kashmir University (SKUAST-K)</h1>
+            </div>
+            <p className="text-xs text-green-200 mt-1">Official Student & Participant Certification Portal</p>
           </div>
-          <div className="h-20 w-20 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center text-amber-300 shrink-0">
-            <Award size={46} />
+          <div className="flex items-center gap-1.5 bg-emerald-900/60 border border-emerald-500/30 px-3 py-1.5 rounded-xl text-xs">
+            <ShieldCheck size={16} className="text-amber-400" />
+            <span>Tamper-Proof Verification Engine</span>
           </div>
         </div>
 
-        {!selectedEvent ? (
-          <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-200 space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                  <FolderCheck className="text-emerald-700" size={20} /> Select University Event
-                </h2>
-                <p className="text-xs text-gray-500 mt-0.5">Explore scheduled conferences and workshops categorized by Year and Month</p>
-              </div>
-
-              <div className="relative max-w-xs w-full">
-                <Search size={15} className="absolute left-3 top-3 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Filter event name or code..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 text-xs border rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-700"
-                />
-              </div>
-            </div>
-
-            {loading ? (
-              <div className="py-12 flex justify-center items-center gap-2 text-gray-500 text-xs">
-                <Loader2 size={20} className="animate-spin text-emerald-700" /> Loading events...
-              </div>
-            ) : Object.keys(groupedEvents).length === 0 ? (
-              <div className="text-center py-10 text-gray-500 text-xs">
-                No events matched your search query.
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {Object.keys(groupedEvents).sort((a, b) => b.localeCompare(a)).map((year) => (
-                  <div key={year} className="space-y-4">
-                    <div className="flex items-center gap-2 border-b border-gray-200 pb-2">
-                      <Calendar size={16} className="text-amber-500" />
-                      <h3 className="text-sm font-black text-gray-800 font-mono">Academic Year {year}</h3>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {Object.keys(groupedEvents[year]).map((month) => (
-                        <div key={month} className="space-y-2">
-                          <span className="text-[11px] font-bold uppercase text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 inline-block">
-                            {month}
-                          </span>
-                          <div className="space-y-2">
-                            {groupedEvents[year][month].map((ev) => (
-                              <button
-                                key={ev.id}
-                                onClick={() => handleSelectEvent(ev)}
-                                className="w-full text-left bg-slate-50 hover:bg-emerald-50/50 p-4 rounded-2xl border border-gray-200 hover:border-emerald-500 transition group flex items-center justify-between cursor-pointer"
-                              >
-                                <div>
-                                  <h4 className="text-xs font-bold text-gray-900 group-hover:text-emerald-900 transition">
-                                    {ev.name}
-                                  </h4>
-                                  <span className="text-[10px] font-mono text-gray-400 mt-0.5 block">
-                                    Prefix: {ev.certPrefix}
-                                  </span>
-                                </div>
-                                <ChevronRight size={16} className="text-gray-400 group-hover:text-emerald-700 transition group-hover:translate-x-1" />
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+        {/* Main Verification Card */}
+        <div className="bg-white rounded-3xl border border-gray-200 p-6 md:p-8 shadow-sm space-y-6">
+          <div className="text-center max-w-lg mx-auto space-y-1">
+            <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-black uppercase px-3 py-1 rounded-full">
+              Participant Self-Service Portal
+            </span>
+            <h2 className="text-2xl font-bold text-gray-900 pt-2">Download Your Verified Certificate</h2>
+            <p className="text-xs text-gray-500">Apna event select karein aur verification details enter karein</p>
           </div>
-        ) : (
-          <div className="space-y-6">
-            <button
-              onClick={() => setSelectedEvent(null)}
-              className="inline-flex items-center gap-1.5 text-xs text-emerald-800 hover:text-emerald-950 font-bold transition cursor-pointer"
-            >
-              <ArrowLeft size={14} /> Back to Event Directory
-            </button>
 
-            <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-200 space-y-6">
-              <div className="border-b pb-4">
-                <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-900 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
-                  <ShieldCheck size={12} className="text-emerald-800" />
-                  2-Factor Security Authentication
-                </span>
-                <h2 className="text-xl font-bold text-gray-900 mt-1 font-serif">{selectedEvent.name}</h2>
-                <p className="text-xs text-gray-500">
-                  Please authenticate with the exact credentials registered during participation.
-                </p>
+          {loadingEvents ? (
+            <div className="py-12 text-center text-xs text-gray-500 flex justify-center items-center gap-2">
+              <Loader2 size={16} className="animate-spin text-emerald-800" /> Connecting to University Registry...
+            </div>
+          ) : (
+            <form onSubmit={handleAuthenticate} className="max-w-xl mx-auto space-y-4">
+              
+              {/* Event Selector */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Select University Event</label>
+                <select
+                  value={selectedEventId}
+                  onChange={(e) => {
+                    setSelectedEventId(e.target.value);
+                    setActiveCert(null);
+                    setErrorMsg(null);
+                  }}
+                  className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none bg-slate-50 font-medium text-slate-800"
+                >
+                  {events.map((ev: any) => (
+                    <option key={ev.id} value={ev.id}>
+                      {ev.name} ({ev.certPrefix}) {ev.isDownloadEnabled === false ? '[PAUSED]' : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {!matchedCert ? (
-                <form onSubmit={handle2FactorVerify} className="max-w-md space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">
-                      {selectedEvent.primaryAuthField || 'Candidate Name'}
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder={`Enter your ${selectedEvent.primaryAuthField || 'Name'}`}
-                      value={primaryVal}
-                      onChange={(e) => setPrimaryVal(e.target.value)}
-                      className="w-full text-xs px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">
-                      {selectedEvent.securityAuthField || 'Registration No / Mobile'}
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder={`Enter your ${selectedEvent.securityAuthField || 'Reg No / Mobile'}`}
-                      value={securityVal}
-                      onChange={(e) => setSecurityVal(e.target.value)}
-                      className="w-full text-xs px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none font-mono"
-                    />
-                  </div>
-
-                  {authError && (
-                    <p className="text-xs text-rose-600 bg-rose-50 p-3 rounded-xl border border-rose-200">
-                      {authError}
-                    </p>
-                  )}
-
-                  <button
-                    type="submit"
-                    disabled={authenticating}
-                    className="w-full py-3 bg-[#0f5132] hover:bg-emerald-900 text-white rounded-xl text-xs font-bold shadow flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-60"
-                  >
-                    {authenticating ? <Loader2 size={16} className="animate-spin" /> : <Lock size={15} />}
-                    <span>Verify & Generate Certificate</span>
-                  </button>
-                </form>
-              ) : (
-                <div className="space-y-6">
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 shrink-0">
-                        <UserCheck size={24} />
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-extrabold uppercase bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded tracking-wide">
-                          Verified Candidate
-                        </span>
-                        <h4 className="text-xs sm:text-sm font-black text-emerald-950 mt-0.5">
-                          Certificate No: <span className="font-mono">{matchedCert.certificate_no}</span>
-                        </h4>
-                        <p className="text-[11px] text-emerald-800">
-                          Digital Record loaded from official SKUAST-K Cloud Ledger.
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={handleDownloadPDF}
-                      disabled={downloading}
-                      className="w-full sm:w-auto px-6 py-3 bg-[#0f5132] hover:bg-emerald-900 active:bg-emerald-950 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-md transition disabled:opacity-60 shrink-0"
-                    >
-                      {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                      <span>{downloading ? 'Rendering HD PDF...' : 'Download Official PDF'}</span>
-                    </button>
-                  </div>
-
-                  <div className="bg-slate-50 p-2 sm:p-4 md:p-6 rounded-2xl border border-gray-200 overflow-hidden">
-                    <CertificateCanvas
-                      event={selectedEvent}
-                      cert={matchedCert}
-                      readOnly={true}
-                    />
-                  </div>
+              {/* Status Alert if Paused */}
+              {!isDownloadsActive && (
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-center gap-2">
+                  <PauseCircle size={16} className="text-amber-600 shrink-0" />
+                  <span>Is event ke certificates download ko administrator dwara abhi temporary pause kiya gaya hai.</span>
                 </div>
               )}
+
+              {/* Primary Input */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  1. {currentEvent?.primaryAuthField || 'Student Name'} *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder={`Enter your ${currentEvent?.primaryAuthField || 'Student Name'}`}
+                  value={primaryInput}
+                  onChange={(e) => setPrimaryInput(e.target.value)}
+                  className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                />
+              </div>
+
+              {/* Security Input */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center gap-1">
+                  <Lock size={12} className="text-amber-500" />
+                  2. {currentEvent?.securityAuthField || 'Student Name'} *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder={`Confirm your ${currentEvent?.securityAuthField || 'Student Name'}`}
+                  value={securityInput}
+                  onChange={(e) => setSecurityInput(e.target.value)}
+                  className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
+                />
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                disabled={verifying || !isDownloadsActive}
+                style={{ backgroundColor: '#0f5132' }}
+                className="w-full py-3 text-white text-xs font-bold rounded-xl shadow-lg hover:opacity-95 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {verifying ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+                <span>{verifying ? 'Verifying Identity...' : 'Authenticate & Access Certificate'}</span>
+              </button>
+            </form>
+          )}
+
+          {/* Error Box */}
+          {errorMsg && (
+            <div className="max-w-xl mx-auto p-4 rounded-2xl bg-rose-50 border border-rose-200 text-center space-y-1">
+              <div className="flex items-center justify-center gap-1.5 text-rose-700 font-bold text-xs">
+                <AlertCircle size={16} /> Certificate Not Found / Access Blocked
+              </div>
+              <p className="text-[11px] text-rose-600">{errorMsg}</p>
             </div>
+          )}
+        </div>
+
+        {/* Certificate Display & Download Component */}
+        {activeCert && activeEvent && (
+          <div className="bg-white rounded-3xl border border-emerald-200 p-6 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+              <div className="flex items-center gap-2">
+                <FileCheck size={20} className="text-emerald-700" />
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">Certificate Identity Authenticated!</h3>
+                  <p className="text-xs font-mono text-emerald-800 font-semibold">{activeCert.certificate_no}</p>
+                </div>
+              </div>
+              <span className="text-[11px] bg-emerald-100 text-emerald-900 px-3 py-1 rounded-full font-bold">
+                ✓ Verified Candidate Record
+              </span>
+            </div>
+
+            {/* High-Res Certificate Canvas */}
+            <CertificateCanvas
+              event={activeEvent}
+              cert={activeCert}
+              readOnly={true}
+            />
           </div>
         )}
 
