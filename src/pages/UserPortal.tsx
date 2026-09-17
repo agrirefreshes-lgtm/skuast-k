@@ -167,6 +167,7 @@ export const UserPortal: React.FC = () => {
     const originalBg = printArea.style.backgroundImage;
 
     try {
+      // 1. Convert template URL to safe base64 to avoid CORS issues
       if (selectedEvent.templateUrl) {
         const safeBase64 = await toDataURL(selectedEvent.templateUrl);
         printArea.style.backgroundImage = `url("${safeBase64}")`;
@@ -175,16 +176,51 @@ export const UserPortal: React.FC = () => {
       await document.fonts.ready;
       await new Promise((res) => setTimeout(res, 250));
 
+      // 2. Render canvas with full oklch cleanup and grey strip elimination
       const canvas = await html2canvas(printArea, {
         scale: 2,
         useCORS: true,
         allowTaint: false,
         logging: false,
         backgroundColor: '#ffffff',
+        imageTimeout: 20000,
+        onclone: (clonedDoc) => {
+          // A. oklch color parsing sanitizer (Stops html2canvas crash)
+          const allNodes = clonedDoc.querySelectorAll('*');
+          allNodes.forEach((node) => {
+            const htmlEl = node as HTMLElement;
+            const style = window.getComputedStyle(htmlEl);
+            
+            if (style.color && style.color.includes('oklch')) {
+              htmlEl.style.color = '#111827';
+            }
+            if (style.backgroundColor && style.backgroundColor.includes('oklch')) {
+              htmlEl.style.backgroundColor = 'transparent';
+            }
+            if (style.borderColor && style.borderColor.includes('oklch')) {
+              htmlEl.style.borderColor = 'transparent';
+            }
+          });
+
+          // B. Remove grey rectangle band behind text elements
+          const targetArea = clonedDoc.getElementById('certificate-print-area');
+          if (targetArea) {
+            const childDivs = targetArea.querySelectorAll('div');
+            childDivs.forEach((child) => {
+              const el = child as HTMLElement;
+              // QR code container white rehne dein, baaki text boxes ko transparent karein
+              if (!el.classList.contains('bg-white')) {
+                el.style.backgroundColor = 'transparent';
+                el.style.boxShadow = 'none';
+              }
+            });
+          }
+        }
       });
 
       const imgData = canvas.toDataURL('image/png', 1.0);
 
+      // 3. Generate Clean Landscape PDF
       const pdf = new jsPDF({
         orientation: 'landscape',
         unit: 'px',
