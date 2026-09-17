@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import type { EventItem, IssuedCertificate, DynamicFieldDef, UploadedBatch } from '../types/certificate';
 import { ExcelUploader } from '../components/ExcelUploader';
@@ -36,10 +36,21 @@ export const AdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [uploadingImage, setUploadingImage] = useState(false);
 
+  // Security Verification Guard
+  const verifyAdminIntegrity = useCallback((): boolean => {
+    const isAuthed = sessionStorage.getItem('skuastk_admin_auth') === 'true';
+    if (!isAuthed) {
+      setIsAuthenticated(false);
+      alert('Security violation: Unauthorized access attempt detected.');
+      return false;
+    }
+    return true;
+  }, []);
+
   const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];
 
   // 1. Fetch Events from Supabase
-  const loadEvents = async () => {
+  const loadEvents = useCallback(async () => {
     setLoading(true);
     const { data: dbEvents, error } = await supabase
       .from('events')
@@ -69,10 +80,10 @@ export const AdminDashboard: React.FC = () => {
       setSelectedEventId('');
     }
     setLoading(false);
-  };
+  }, []);
 
   // 2. Fetch Certificates for Current Event
-  const loadCertificates = async (eventId: string) => {
+  const loadCertificates = useCallback(async (eventId: string) => {
     if (!eventId) {
       setCertificates([]);
       return;
@@ -95,20 +106,20 @@ export const AdminDashboard: React.FC = () => {
       }));
       setCertificates(mapped);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (isAuthenticated) {
       loadEvents();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, loadEvents]);
 
   useEffect(() => {
     if (selectedEventId) {
       loadCertificates(selectedEventId);
       setActiveCertIndex(0);
     }
-  }, [selectedEventId]);
+  }, [selectedEventId, loadCertificates]);
 
   if (!isAuthenticated) {
     return <AdminLogin onAuthenticated={() => setIsAuthenticated(true)} />;
@@ -125,18 +136,20 @@ export const AdminDashboard: React.FC = () => {
     return `${baseUrl}/#/event/${event.slug || event.id}`;
   };
 
-  // Create Event in Supabase
+  // Create Event in Supabase with Auth Guard
   const handleCreateEvent = async () => {
+    if (!verifyAdminIntegrity()) return;
+
     const name = prompt('Event Name (e.g. 60th ISAE Annual Convention):');
-    if (!name) return;
+    if (!name || !name.trim()) return;
     const cleanSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const prefix = prompt('Certificate Number Prefix:', `SKUASTK/${cleanSlug.substring(0, 4).toUpperCase()}/2026/`) || 'SKUASTK/CERT/2026/';
 
     const newEv: EventItem = {
       id: `event-${Date.now()}`,
-      name,
+      name: name.trim(),
       slug: cleanSlug,
-      certPrefix: prefix,
+      certPrefix: prefix.trim(),
       templateUrl: 'https://dummyimage.com/1920x1080/0f5132/ffffff&text=Upload+Template',
       batches: [],
       fields: [],
@@ -168,8 +181,10 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Delete Entire Event
+  // Delete Entire Event with Auth Guard
   const handleDeleteEvent = async (eventId: string, eventName: string) => {
+    if (!verifyAdminIntegrity()) return;
+
     const confirmDelete = confirm(`Kya aap sach me "${eventName}" event ko delete karna chahte hain?\nIs event ke saare certificates aur uploaded data permanent delete ho jayenge!`);
     if (!confirmDelete) return;
 
@@ -194,8 +209,10 @@ export const AdminDashboard: React.FC = () => {
     alert(`Event "${eventName}" successfully delete ho gaya!`);
   };
 
-  // Upload Template Image directly to Supabase Storage Bucket
+  // Upload Template Image with Auth Guard
   const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!verifyAdminIntegrity()) return;
+
     const file = e.target.files?.[0];
     if (!file || !currentEvent) return;
 
@@ -226,8 +243,10 @@ export const AdminDashboard: React.FC = () => {
     setUploadingImage(false);
   };
 
-  // Sync Layout Changes to Supabase
+  // Sync Layout Changes to Supabase with Auth Guard
   const handleUpdateEvent = async (updated: EventItem) => {
+    if (!verifyAdminIntegrity()) return;
+
     setEvents(events.map((ev) => (ev.id === updated.id ? updated : ev)));
     await supabase.from('events').update({
       fields: updated.fields,
@@ -238,9 +257,9 @@ export const AdminDashboard: React.FC = () => {
     }).eq('id', updated.id);
   };
 
-  // Upload Excel Batch & Save Directly to Supabase
+  // Upload Excel Batch with Auth Guard
   const handleExcelParsed = async (records: Record<string, string>[], columns: string[], fileName: string) => {
-    if (!currentEvent) return;
+    if (!verifyAdminIntegrity() || !currentEvent) return;
 
     const batchId = `batch-${Date.now()}`;
     const newBatch: UploadedBatch = {
@@ -326,8 +345,9 @@ export const AdminDashboard: React.FC = () => {
     alert(`${records.length} Certificates Supabase Cloud me successfully save ho gaye!`);
   };
 
-  // Delete Batch from Database
+  // Delete Batch from Database with Auth Guard
   const handleDeleteBatch = async (batchId: string) => {
+    if (!verifyAdminIntegrity()) return;
     if (!confirm('Batch delete karein? Supabase se bhi saara data remove ho jayega.')) return;
 
     await supabase.from('certificates').delete().eq('batch_id', batchId);
@@ -341,6 +361,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const handleExportEventExcel = () => {
+    if (!verifyAdminIntegrity()) return;
     if (certificates.length === 0) return alert('Records khali hain!');
     const exportRows = certificates.map((c) => ({
       'Certificate No': c.certificate_no,
