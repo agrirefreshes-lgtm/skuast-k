@@ -48,7 +48,7 @@ export const Footer: React.FC = () => {
 
             <div className="pt-2">
               <a
-                href="https://skuastkashmir.co.in/"
+                href="https://skuastkashmir.ac.in/"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-400 hover:text-amber-300 hover:underline transition"
