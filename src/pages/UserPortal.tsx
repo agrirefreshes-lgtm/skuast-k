@@ -85,11 +85,6 @@ export const UserPortal: React.FC = () => {
         throw new Error('Certificates download for this event is temporarily paused by department administrator.');
       }
 
-      const cleanPrimary = primaryInput.trim().toLowerCase();
-      const cleanSecurity = securityInput.trim().toLowerCase();
-      const primaryKey = currentEvent.primaryAuthField || 'Student Name';
-      const securityKey = currentEvent.securityAuthField || 'Student Name';
-
       // 2. Fetch all certificates for this event from Supabase safely
       const { data: certsData, error: certsErr } = await supabase
         .from('certificates')
@@ -101,18 +96,35 @@ export const UserPortal: React.FC = () => {
         throw new Error('Is event ke liye abhi koi certificates upload nahi kiye gaye hain.');
       }
 
-      // 3. Client-side robust matching (Handles same fields, case-insensitive, spaces)
+      // 3. Robust Excel Data Key-Insensitive Matching
       const matchedRow = certsData.find((c: any) => {
         const recordData = c.data || {};
         
-        // Find values dynamically across possible key variations
-        const pVal = String(recordData[primaryKey] || recordData['Student Name'] || recordData['Name'] || '').trim().toLowerCase();
-        const sVal = String(recordData[securityKey] || recordData['Student Name'] || recordData['Registration No'] || recordData['Mobile'] || '').trim().toLowerCase();
+        // Normalize keys and user inputs (strip spaces, lowercase)
+        const normalize = (str: any) => String(str || '').trim().toLowerCase();
+        
+        const cleanUserPrimary = normalize(primaryInput);
+        const cleanUserSecurity = normalize(securityInput);
 
-        const isPrimaryMatch = pVal === cleanPrimary;
-        const isSecurityMatch = (primaryKey === securityKey) || (sVal === cleanSecurity) || (cleanSecurity === '');
+        let foundPrimary = false;
+        let foundSecurity = false;
 
-        return isPrimaryMatch && isSecurityMatch;
+        for (const [, val] of Object.entries(recordData)) {
+          const valStr = normalize(val);
+          if (valStr === cleanUserPrimary) {
+            foundPrimary = true;
+          }
+          if (valStr === cleanUserSecurity) {
+            foundSecurity = true;
+          }
+        }
+
+        // If primary and security are the same field or single field check
+        if (currentEvent.primaryAuthField === currentEvent.securityAuthField || !cleanUserSecurity) {
+          return foundPrimary;
+        }
+
+        return foundPrimary && foundSecurity;
       });
 
       if (!matchedRow) {
