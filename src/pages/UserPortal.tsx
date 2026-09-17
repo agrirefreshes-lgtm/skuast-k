@@ -107,28 +107,24 @@ export const UserPortal: React.FC = () => {
     const pKey = selectedEvent.primaryAuthField;
     const sKey = selectedEvent.securityAuthField;
 
+    // Secure Query: Sirf exact match wala single record mangwaya taaki DevTools se poora dump leak na ho
     const { data: certList, error } = await supabase
       .from('certificates')
-      .select('*')
-      .eq('event_id', selectedEvent.id);
+      .select('certificate_no, event_id, event_name, issue_date, status, data')
+      .eq('event_id', selectedEvent.id)
+      .filter(`data->>${pKey}`, 'eq', primaryVal.trim())
+      .filter(`data->>${sKey}`, 'eq', securityVal.trim())
+      .limit(1);
 
     setAuthenticating(false);
 
-    if (error || !certList || certList.length === 0) {
-      setAuthError('No certificates uploaded yet for this event.');
+    if (error) {
+      setAuthError('Verification check failed. Please check network connection.');
       return;
     }
 
-    const cleanInput = (s: string) => s.toLowerCase().trim();
-
-    const match = certList.find((c: any) => {
-      const data = c.data || {};
-      const pMatch = cleanInput(String(data[pKey] || '')) === cleanInput(primaryVal);
-      const sMatch = cleanInput(String(data[sKey] || '')) === cleanInput(securityVal);
-      return pMatch && sMatch;
-    });
-
-    if (match) {
+    if (certList && certList.length > 0) {
+      const match = certList[0];
       setMatchedCert({
         certificate_no: match.certificate_no,
         event_id: match.event_id,
@@ -183,7 +179,7 @@ export const UserPortal: React.FC = () => {
         backgroundColor: '#ffffff',
         imageTimeout: 20000,
         onclone: (clonedDoc) => {
-          // 1. Universal modern CSS color filter (oklab, oklch, lab, color(srgb))
+          // Universal modern CSS color filter (oklab, oklch, lab, color(srgb))
           const modernColorRegex = /(oklab|oklch|lab|color\(srgb)/i;
           const allNodes = clonedDoc.querySelectorAll('*');
 
@@ -202,7 +198,7 @@ export const UserPortal: React.FC = () => {
             }
           });
 
-          // 2. Strict transparent background for child text divs (No grey shade)
+          // Strict transparent background for child text divs (No grey shade)
           const targetArea = clonedDoc.getElementById('certificate-print-area');
           if (targetArea) {
             const childDivs = targetArea.querySelectorAll('div');
