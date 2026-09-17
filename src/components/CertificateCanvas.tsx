@@ -22,7 +22,10 @@ import {
   Lock,
   Unlock,
   AlignCenterHorizontal,
-  AlignCenterVertical
+  AlignCenterVertical,
+  ZoomIn,
+  ZoomOut,
+  Maximize
 } from 'lucide-react';
 
 interface Props {
@@ -45,6 +48,7 @@ const CERT_FONTS = [
 export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent, readOnly = false }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedElementKey, setSelectedElementKey] = useState<string | null>(null);
+  const [zoomLevel, setZoomLevel] = useState<number>(1); // 1 = 100%, 0.85 = Fit, etc.
 
   const getQrVerificationUrl = () => {
     const basePath = window.location.href.split('#')[0].replace(/\/+$/, '');
@@ -132,29 +136,30 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   };
 
   return (
-    <div className="flex flex-col border border-slate-700/80 rounded-2xl bg-slate-900/60 shadow-2xl overflow-hidden">
+    <div className="flex flex-col border border-slate-700/80 rounded-2xl bg-slate-950 shadow-2xl overflow-hidden">
       
-      {/* 1. FIXED TOP MS-WORD STYLE RIBBON TOOLBAR */}
+      {/* 1. FIXED TOP MS-WORD / CANVA STYLE RIBBON TOOLBAR */}
       {!readOnly && (
-        <div className="sticky top-0 z-30 bg-slate-900 border-b border-slate-700 shadow-md">
+        <div className="sticky top-0 z-30 bg-[#0d131f] border-b border-slate-800 shadow-md">
           
-          {/* Layer Selector Bar */}
-          <div className="px-3 py-2 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-[11px] font-black tracking-wider text-amber-400 shrink-0">
-              <MousePointerClick size={14} />
-              <span>LAYERS:</span>
-            </div>
+          {/* Layer Selector Bar + Zoom Controls */}
+          <div className="px-3.5 py-2 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+            
+            <div className="flex items-center gap-2 overflow-x-auto py-0.5">
+              <div className="flex items-center gap-1.5 text-[11px] font-black tracking-wider text-amber-400 shrink-0 mr-1">
+                <MousePointerClick size={14} />
+                <span>LAYERS:</span>
+              </div>
 
-            <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto py-0.5">
               {event.fields.filter(f => f.visible).map((f) => (
-                <div key={f.key} className="inline-flex items-center rounded-lg overflow-hidden border border-slate-700 shadow-sm">
+                <div key={f.key} className="inline-flex items-center rounded-lg overflow-hidden border border-slate-700/80 shadow-sm shrink-0">
                   <button
                     type="button"
                     onClick={() => setSelectedElementKey(f.key)}
                     className={`px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer ${
                       selectedElementKey === f.key
                         ? 'bg-amber-400 text-slate-950 font-bold'
-                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                        : 'bg-slate-800/90 text-slate-300 hover:bg-slate-700 hover:text-white'
                     }`}
                   >
                     {f.label}
@@ -169,7 +174,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                     }}
                     title={f.isLocked ? "Layer Locked" : "Click to Lock"}
                     className={`px-1.5 py-1 text-[10px] cursor-pointer transition border-l border-slate-700 ${
-                      f.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                      f.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800/90 text-slate-400 hover:text-white'
                     }`}
                   >
                     {f.isLocked ? <Lock size={10} /> : <Unlock size={10} />}
@@ -178,14 +183,14 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               ))}
 
               {event.certNoConfig.visible && (
-                <div className="inline-flex items-center rounded-lg overflow-hidden border border-slate-700 shadow-sm">
+                <div className="inline-flex items-center rounded-lg overflow-hidden border border-slate-700/80 shadow-sm shrink-0">
                   <button
                     type="button"
                     onClick={() => setSelectedElementKey('__cert_no__')}
                     className={`px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer ${
                       selectedElementKey === '__cert_no__'
                         ? 'bg-amber-400 text-slate-950 font-bold'
-                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                        : 'bg-slate-800/90 text-slate-300 hover:bg-slate-700 hover:text-white'
                     }`}
                   >
                     <Hash size={11} /> Cert No
@@ -197,7 +202,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                       certNoConfig: { ...event.certNoConfig, isLocked: !event.certNoConfig.isLocked }
                     })}
                     className={`px-1.5 py-1 text-[10px] cursor-pointer transition border-l border-slate-700 ${
-                      event.certNoConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400'
+                      event.certNoConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800/90 text-slate-400'
                     }`}
                   >
                     {event.certNoConfig.isLocked ? <Lock size={10} /> : <Unlock size={10} />}
@@ -206,14 +211,14 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               )}
 
               {event.qrConfig.visible && (
-                <div className="inline-flex items-center rounded-lg overflow-hidden border border-slate-700 shadow-sm">
+                <div className="inline-flex items-center rounded-lg overflow-hidden border border-slate-700/80 shadow-sm shrink-0">
                   <button
                     type="button"
                     onClick={() => setSelectedElementKey('__qr_code__')}
                     className={`px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer ${
                       selectedElementKey === '__qr_code__'
                         ? 'bg-amber-400 text-slate-950 font-bold'
-                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                        : 'bg-slate-800/90 text-slate-300 hover:bg-slate-700 hover:text-white'
                     }`}
                   >
                     <QrCode size={11} /> QR Code
@@ -225,7 +230,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                       qrConfig: { ...event.qrConfig, isLocked: !event.qrConfig.isLocked }
                     })}
                     className={`px-1.5 py-1 text-[10px] cursor-pointer transition border-l border-slate-700 ${
-                      event.qrConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400'
+                      event.qrConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800/90 text-slate-400'
                     }`}
                   >
                     {event.qrConfig.isLocked ? <Lock size={10} /> : <Unlock size={10} />}
@@ -233,15 +238,47 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 </div>
               )}
             </div>
+
+            {/* Canvas Zoom Tools (Fit / Zoom In / Zoom Out) */}
+            <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-xl border border-slate-700/80 shrink-0">
+              <button
+                type="button"
+                onClick={() => setZoomLevel(prev => Math.max(0.6, Number((prev - 0.1).toFixed(2))))}
+                className="p-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition cursor-pointer"
+                title="Zoom Out"
+              >
+                <ZoomOut size={13} />
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setZoomLevel(0.9)}
+                className="px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-400 hover:bg-slate-800 rounded transition cursor-pointer flex items-center gap-0.5"
+                title="Fit Canvas to Viewport"
+              >
+                <Maximize size={10} />
+                <span>{Math.round(zoomLevel * 100)}%</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setZoomLevel(prev => Math.min(1.4, Number((prev + 0.1).toFixed(2))))}
+                className="p-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition cursor-pointer"
+                title="Zoom In"
+              >
+                <ZoomIn size={13} />
+              </button>
+            </div>
+
           </div>
 
           {/* Active Ribbon Inspector Bar */}
           {selectedField ? (
-            <div className="px-3 py-2 bg-slate-950 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+            <div className="px-3.5 py-2 bg-slate-950/95 border-t border-slate-800/60 flex flex-wrap items-center justify-between gap-2.5 text-xs">
               <div className="flex flex-wrap items-center gap-2">
                 
                 {/* Font Selector */}
-                <div className="flex items-center gap-1 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700">
+                <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-700">
                   <Type size={13} className="text-emerald-400" />
                   <select
                     value={selectedField.fontFamily || 'Georgia, serif'}
@@ -257,11 +294,11 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 </div>
 
                 {/* Size Stepper */}
-                <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+                <div className="flex items-center bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ fontSize: Math.max(9, (selectedField.fontSize || 18) - 1) })}
-                    className="px-2 py-1 hover:bg-slate-700 text-white font-bold cursor-pointer"
+                    className="px-2 py-1 hover:bg-slate-800 text-white font-bold cursor-pointer"
                   >
                     -
                   </button>
@@ -271,18 +308,18 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ fontSize: (selectedField.fontSize || 18) + 1 })}
-                    className="px-2 py-1 hover:bg-slate-700 text-white font-bold cursor-pointer"
+                    className="px-2 py-1 hover:bg-slate-800 text-white font-bold cursor-pointer"
                   >
                     +
                   </button>
                 </div>
 
                 {/* Center Align Tools */}
-                <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 p-0.5">
+                <div className="flex items-center bg-slate-900 rounded-lg border border-slate-700 p-0.5">
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ x: 50 })}
-                    className="px-1.5 py-1 hover:bg-slate-700 rounded text-slate-300 hover:text-amber-400 transition cursor-pointer flex items-center gap-1"
+                    className="px-1.5 py-1 hover:bg-slate-800 rounded text-slate-300 hover:text-amber-400 transition cursor-pointer flex items-center gap-1"
                     title="Center Horizontally (50%)"
                   >
                     <AlignCenterHorizontal size={13} />
@@ -291,7 +328,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ y: 50 })}
-                    className="px-1.5 py-1 hover:bg-slate-700 rounded text-slate-300 hover:text-amber-400 transition cursor-pointer flex items-center gap-1"
+                    className="px-1.5 py-1 hover:bg-slate-800 rounded text-slate-300 hover:text-amber-400 transition cursor-pointer flex items-center gap-1"
                     title="Center Vertically (50%)"
                   >
                     <AlignCenterVertical size={13} />
@@ -300,7 +337,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 </div>
 
                 {/* Format Toggles */}
-                <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 p-0.5">
+                <div className="flex items-center bg-slate-900 rounded-lg border border-slate-700 p-0.5">
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ isBold: !selectedField.isBold })}
@@ -325,7 +362,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 </div>
 
                 {/* Align Text */}
-                <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 p-0.5">
+                <div className="flex items-center bg-slate-900 rounded-lg border border-slate-700 p-0.5">
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ align: 'left' })}
@@ -350,7 +387,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 </div>
 
                 {/* Text Color */}
-                <label className="flex items-center gap-1 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700 cursor-pointer">
+                <label className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-700 cursor-pointer">
                   <Palette size={13} className="text-amber-400" />
                   <input
                     type="color"
@@ -361,7 +398,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 </label>
 
                 {/* Highlight Color */}
-                <div className="flex items-center gap-1 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700">
+                <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-700">
                   <Highlighter size={13} className="text-amber-400" />
                   <input
                     type="color"
@@ -381,7 +418,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 </div>
 
                 {/* Width Stepper */}
-                <div className="flex items-center gap-1 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700">
+                <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-700">
                   <Maximize2 size={12} className="text-cyan-400" />
                   <span className="font-mono text-[11px] text-cyan-400 font-bold">{selectedField.maxWidth || 760}px</span>
                   <button
@@ -401,33 +438,33 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 </div>
 
                 {/* Nudge D-Pad */}
-                <div className="flex items-center gap-0.5 bg-slate-800 px-1.5 py-0.5 rounded-lg border border-slate-700">
+                <div className="flex items-center gap-0.5 bg-slate-900 px-1.5 py-0.5 rounded-lg border border-slate-700">
                   <span className="text-[9px] text-slate-400 font-bold mr-1">NUDGE:</span>
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ x: Math.max(0, Number((selectedField.x - 0.2).toFixed(2))) })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300 cursor-pointer"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300 cursor-pointer"
                   >
                     <ArrowLeft size={11} />
                   </button>
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ y: Math.max(0, Number((selectedField.y - 0.2).toFixed(2))) })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300 cursor-pointer"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300 cursor-pointer"
                   >
                     <ArrowUp size={11} />
                   </button>
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ y: Math.min(100, Number((selectedField.y + 0.2).toFixed(2))) })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300 cursor-pointer"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300 cursor-pointer"
                   >
                     <ArrowDown size={11} />
                   </button>
                   <button
                     type="button"
                     onClick={() => updateSelectedField({ x: Math.min(100, Number((selectedField.x + 0.2).toFixed(2))) })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300 cursor-pointer"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300 cursor-pointer"
                   >
                     <ArrowRight size={11} />
                   </button>
@@ -438,7 +475,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   type="button"
                   onClick={() => updateSelectedField({ isLocked: !selectedField.isLocked })}
                   className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                    selectedField.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
+                    selectedField.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-900 text-slate-300 hover:text-white border border-slate-700'
                   }`}
                   title={selectedField.isLocked ? "Unlock Field" : "Lock Field"}
                 >
@@ -458,14 +495,14 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               </button>
             </div>
           ) : selectedElementKey === '__cert_no__' ? (
-            <div className="px-3 py-2 bg-slate-950 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+            <div className="px-3.5 py-2 bg-slate-950/95 border-t border-slate-800/60 flex flex-wrap items-center justify-between gap-2.5 text-xs">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-amber-400 text-xs">CERT NO:</span>
-                <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+                <div className="flex items-center bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, fontSize: Math.max(8, event.certNoConfig.fontSize - 1) } })}
-                    className="px-2 py-1 hover:bg-slate-700 font-bold"
+                    className="px-2 py-1 hover:bg-slate-800 font-bold"
                   >
                     -
                   </button>
@@ -473,13 +510,13 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, fontSize: event.certNoConfig.fontSize + 1 } })}
-                    className="px-2 py-1 hover:bg-slate-700 font-bold"
+                    className="px-2 py-1 hover:bg-slate-800 font-bold"
                   >
                     +
                   </button>
                 </div>
 
-                <label className="flex items-center gap-1 bg-slate-800 px-2 py-1 rounded-lg border border-slate-700 cursor-pointer">
+                <label className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-700 cursor-pointer">
                   <Palette size={13} className="text-amber-400" />
                   <input
                     type="color"
@@ -492,38 +529,38 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 <button
                   type="button"
                   onClick={() => onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, isBold: !event.certNoConfig.isBold } })}
-                  className={`px-2 py-1 rounded-lg text-xs font-bold ${event.certNoConfig.isBold ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-300'}`}
+                  className={`px-2 py-1 rounded-lg text-xs font-bold ${event.certNoConfig.isBold ? 'bg-amber-400 text-slate-950' : 'bg-slate-900 text-slate-300'}`}
                 >
                   Bold
                 </button>
 
                 {/* Nudge */}
-                <div className="flex items-center gap-0.5 bg-slate-800 px-1.5 py-0.5 rounded-lg border border-slate-700">
+                <div className="flex items-center gap-0.5 bg-slate-900 px-1.5 py-0.5 rounded-lg border border-slate-700">
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, x: Math.max(0, Number((event.certNoConfig.x - 0.2).toFixed(2))) } })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300"
                   >
                     <ArrowLeft size={11} />
                   </button>
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, y: Math.max(0, Number((event.certNoConfig.y - 0.2).toFixed(2))) } })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300"
                   >
                     <ArrowUp size={11} />
                   </button>
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, y: Math.min(100, Number((event.certNoConfig.y + 0.2).toFixed(2))) } })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300"
                   >
                     <ArrowDown size={11} />
                   </button>
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, x: Math.min(100, Number((event.certNoConfig.x + 0.2).toFixed(2))) } })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300"
                   >
                     <ArrowRight size={11} />
                   </button>
@@ -537,7 +574,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                     certNoConfig: { ...event.certNoConfig, isLocked: !event.certNoConfig.isLocked }
                   })}
                   className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                    event.certNoConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300 border border-slate-700'
+                    event.certNoConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-900 text-slate-300 border border-slate-700'
                   }`}
                   title={event.certNoConfig.isLocked ? "Unlock Cert No" : "Lock Cert No"}
                 >
@@ -555,14 +592,14 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               </button>
             </div>
           ) : selectedElementKey === '__qr_code__' ? (
-            <div className="px-3 py-2 bg-slate-950 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+            <div className="px-3.5 py-2 bg-slate-950/95 border-t border-slate-800/60 flex flex-wrap items-center justify-between gap-2.5 text-xs">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-amber-400 text-xs">QR CODE:</span>
-                <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+                <div className="flex items-center bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, size: Math.max(40, event.qrConfig.size - 5) } })}
-                    className="px-2 py-1 hover:bg-slate-700 font-bold"
+                    className="px-2 py-1 hover:bg-slate-800 font-bold"
                   >
                     -
                   </button>
@@ -570,39 +607,39 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, size: event.qrConfig.size + 5 } })}
-                    className="px-2 py-1 hover:bg-slate-700 font-bold"
+                    className="px-2 py-1 hover:bg-slate-800 font-bold"
                   >
                     +
                   </button>
                 </div>
 
                 {/* Nudge */}
-                <div className="flex items-center gap-0.5 bg-slate-800 px-1.5 py-0.5 rounded-lg border border-slate-700">
+                <div className="flex items-center gap-0.5 bg-slate-900 px-1.5 py-0.5 rounded-lg border border-slate-700">
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, x: Math.max(0, Number((event.qrConfig.x - 0.2).toFixed(2))) } })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300"
                   >
                     <ArrowLeft size={11} />
                   </button>
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, y: Math.max(0, Number((event.qrConfig.y - 0.2).toFixed(2))) } })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300"
                   >
                     <ArrowUp size={11} />
                   </button>
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, y: Math.min(100, Number((event.qrConfig.y + 0.2).toFixed(2))) } })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300"
                   >
                     <ArrowDown size={11} />
                   </button>
                   <button
                     type="button"
                     onClick={() => onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, x: Math.min(100, Number((event.qrConfig.x + 0.2).toFixed(2))) } })}
-                    className="p-1 hover:bg-slate-700 rounded text-slate-300"
+                    className="p-1 hover:bg-slate-800 rounded text-slate-300"
                   >
                     <ArrowRight size={11} />
                   </button>
@@ -616,7 +653,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                     qrConfig: { ...event.qrConfig, isLocked: !event.qrConfig.isLocked }
                   })}
                   className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                    event.qrConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300 border border-slate-700'
+                    event.qrConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-900 text-slate-300 border border-slate-700'
                   }`}
                   title={event.qrConfig.isLocked ? "Unlock QR Code" : "Lock QR Code"}
                 >
@@ -638,100 +675,105 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
         </div>
       )}
 
-      {/* 2. MS-WORD STYLE PAGE VIEWPORT / SLIDING WORKSPACE */}
-      <div className="p-4 sm:p-6 md:p-8 bg-slate-950/80 flex items-center justify-center overflow-auto max-h-[78vh]">
-        <div
-          ref={containerRef}
-          id="certificate-print-area"
-          className="relative w-full max-w-[1000px] aspect-[1.414/1] bg-white shadow-2xl rounded-lg overflow-hidden select-none border border-slate-700/50 shrink-0"
-          style={{
-            backgroundImage: `url(${event.templateUrl})`,
-            backgroundSize: '100% 100%',
-            backgroundPosition: 'center',
-            backgroundRepeat: 'no-repeat',
-          }}
+      {/* 2. CANVA/FIGMA STYLE DESK WORKSPACE - 100% VISIBLE FULL CERTIFICATE VIEW */}
+      <div className="w-full p-4 sm:p-6 md:p-8 bg-[#0a0e17] flex items-center justify-center overflow-auto min-h-[520px] max-h-[72vh]">
+        <div 
+          className="transition-transform duration-150 ease-out origin-center flex items-center justify-center shadow-2xl p-1"
+          style={{ transform: `scale(${zoomLevel})` }}
         >
-          {event.fields.filter(f => f.visible).map((field) => {
-            const textValue = cert.data[field.label] || cert.data[field.key] || '';
-            if (!textValue) return null;
-            const isSelected = selectedElementKey === field.key;
-            const isDraggable = !readOnly && !field.isLocked;
+          <div
+            ref={containerRef}
+            id="certificate-print-area"
+            className="relative w-[850px] aspect-[1.414/1] bg-white shadow-2xl rounded-sm overflow-hidden select-none border-2 border-slate-700/60 shrink-0"
+            style={{
+              backgroundImage: `url(${event.templateUrl})`,
+              backgroundSize: '100% 100%',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
+            }}
+          >
+            {event.fields.filter(f => f.visible).map((field) => {
+              const textValue = cert.data[field.label] || cert.data[field.key] || '';
+              if (!textValue) return null;
+              const isSelected = selectedElementKey === field.key;
+              const isDraggable = !readOnly && !field.isLocked;
 
-            return (
+              return (
+                <div
+                  key={field.key}
+                  draggable={isDraggable}
+                  onClick={() => !readOnly && setSelectedElementKey(field.key)}
+                  onDragEnd={(e) => handleDragEnd(e, field.key)}
+                  className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all ${
+                    !readOnly
+                      ? `${isDraggable ? 'cursor-move hover:ring-2 hover:ring-emerald-500' : 'cursor-pointer'} rounded ${
+                          isSelected ? 'ring-2 ring-blue-500 shadow-lg !bg-blue-50/20' : ''
+                        }`
+                      : ''
+                  }`}
+                  style={{
+                    left: `${field.x}%`,
+                    top: `${field.y}%`,
+                    ...calculateDynamicStyle(field, String(textValue)),
+                  }}
+                >
+                  {textValue}
+                </div>
+              );
+            })}
+
+            {event.certNoConfig.visible && (
               <div
-                key={field.key}
-                draggable={isDraggable}
-                onClick={() => !readOnly && setSelectedElementKey(field.key)}
-                onDragEnd={(e) => handleDragEnd(e, field.key)}
-                className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all ${
+                draggable={!readOnly && !event.certNoConfig.isLocked}
+                onClick={() => !readOnly && setSelectedElementKey('__cert_no__')}
+                onDragEnd={handleCertNoDragEnd}
+                className={`absolute transform -translate-y-1/2 ${
                   !readOnly
-                    ? `${isDraggable ? 'cursor-move hover:ring-2 hover:ring-emerald-500' : 'cursor-pointer'} rounded ${
-                        isSelected ? 'ring-2 ring-blue-500 shadow-lg !bg-blue-50/20' : ''
+                    ? `${!event.certNoConfig.isLocked ? 'cursor-move hover:ring-2 hover:ring-emerald-500' : 'cursor-pointer'} rounded p-1 ${
+                        selectedElementKey === '__cert_no__' ? 'ring-2 ring-blue-500 bg-blue-50/20 shadow-md' : ''
                       }`
                     : ''
                 }`}
                 style={{
-                  left: `${field.x}%`,
-                  top: `${field.y}%`,
-                  ...calculateDynamicStyle(field, String(textValue)),
+                  left: `${event.certNoConfig.x}%`,
+                  top: `${event.certNoConfig.y}%`,
+                  fontSize: `${event.certNoConfig.fontSize}px`,
+                  color: event.certNoConfig.color,
+                  fontWeight: event.certNoConfig.isBold ? 'bold' : 'normal',
+                  whiteSpace: 'nowrap',
+                  backgroundColor: 'transparent',
                 }}
               >
-                {textValue}
+                {cert.certificate_no}
               </div>
-            );
-          })}
+            )}
 
-          {event.certNoConfig.visible && (
-            <div
-              draggable={!readOnly && !event.certNoConfig.isLocked}
-              onClick={() => !readOnly && setSelectedElementKey('__cert_no__')}
-              onDragEnd={handleCertNoDragEnd}
-              className={`absolute transform -translate-y-1/2 ${
-                !readOnly
-                  ? `${!event.certNoConfig.isLocked ? 'cursor-move hover:ring-2 hover:ring-emerald-500' : 'cursor-pointer'} rounded p-1 ${
-                      selectedElementKey === '__cert_no__' ? 'ring-2 ring-blue-500 bg-blue-50/20 shadow-md' : ''
-                    }`
-                  : ''
-              }`}
-              style={{
-                left: `${event.certNoConfig.x}%`,
-                top: `${event.certNoConfig.y}%`,
-                fontSize: `${event.certNoConfig.fontSize}px`,
-                color: event.certNoConfig.color,
-                fontWeight: event.certNoConfig.isBold ? 'bold' : 'normal',
-                whiteSpace: 'nowrap',
-                backgroundColor: 'transparent',
-              }}
-            >
-              {cert.certificate_no}
-            </div>
-          )}
-
-          {event.qrConfig.visible && (
-            <div
-              draggable={!readOnly && !event.qrConfig.isLocked}
-              onClick={() => !readOnly && setSelectedElementKey('__qr_code__')}
-              onDragEnd={handleQRDragEnd}
-              className={`absolute transform -translate-x-1/2 -translate-y-1/2 ${
-                !readOnly
-                  ? `${!event.qrConfig.isLocked ? 'cursor-move hover:ring-2 hover:ring-emerald-500' : 'cursor-pointer'} rounded p-1 ${
-                      selectedElementKey === '__qr_code__' ? 'ring-2 ring-blue-500 bg-blue-100 shadow-md' : 'bg-white/90'
-                    }`
-                  : 'bg-white p-1 rounded-sm'
-              }`}
-              style={{
-                left: `${event.qrConfig.x}%`,
-                top: `${event.qrConfig.y}%`,
-              }}
-            >
-              <QRCodeSVG
-                value={getQrVerificationUrl()}
-                size={event.qrConfig.size}
-                level="M"
-                includeMargin={false}
-              />
-            </div>
-          )}
+            {event.qrConfig.visible && (
+              <div
+                draggable={!readOnly && !event.qrConfig.isLocked}
+                onClick={() => !readOnly && setSelectedElementKey('__qr_code__')}
+                onDragEnd={handleQRDragEnd}
+                className={`absolute transform -translate-x-1/2 -translate-y-1/2 ${
+                  !readOnly
+                    ? `${!event.qrConfig.isLocked ? 'cursor-move hover:ring-2 hover:ring-emerald-500' : 'cursor-pointer'} rounded p-1 ${
+                        selectedElementKey === '__qr_code__' ? 'ring-2 ring-blue-500 bg-blue-100 shadow-md' : 'bg-white/90'
+                      }`
+                    : 'bg-white p-1 rounded-sm'
+                }`}
+                style={{
+                  left: `${event.qrConfig.x}%`,
+                  top: `${event.qrConfig.y}%`,
+                }}
+              >
+                <QRCodeSVG
+                  value={getQrVerificationUrl()}
+                  size={event.qrConfig.size}
+                  level="M"
+                  includeMargin={false}
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
