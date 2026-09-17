@@ -25,7 +25,9 @@ import {
   AlignCenterVertical,
   ZoomIn,
   ZoomOut,
-  Maximize
+  Maximize,
+  Download,
+  Loader2
 } from 'lucide-react';
 
 interface Props {
@@ -47,8 +49,10 @@ const CERT_FONTS = [
 
 export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent, readOnly = false }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [selectedElementKey, setSelectedElementKey] = useState<string | null>(null);
-  const [zoomLevel, setZoomLevel] = useState<number>(1); // 1 = 100%, 0.85 = Fit, etc.
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
   const getQrVerificationUrl = () => {
     const basePath = window.location.href.split('#')[0].replace(/\/+$/, '');
@@ -133,6 +137,100 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       f.key === selectedElementKey ? { ...f, ...updates } : f
     );
     onUpdateEvent({ ...event, fields: updatedFields });
+  };
+
+  // High-Resolution Export Engine
+  const handleDownloadHighRes = async () => {
+    if (!imgRef.current) return;
+    setIsExporting(true);
+
+    try {
+      const naturalWidth = imgRef.current.naturalWidth || 1920;
+      const naturalHeight = imgRef.current.naturalHeight || 1080;
+
+      const offscreen = document.createElement('canvas');
+      offscreen.width = naturalWidth;
+      offscreen.height = naturalHeight;
+      const ctx = offscreen.getContext('2d');
+
+      if (!ctx) throw new Error('Failed to initialize 2D context');
+
+      // 1. Draw Template Image at 100% original quality
+      ctx.drawImage(imgRef.current, 0, 0, naturalWidth, naturalHeight);
+
+      // Relative scale based on container baseline (850px)
+      const scale = naturalWidth / 850;
+
+      // 2. Draw Dynamic Text Fields
+      event.fields.filter(f => f.visible).forEach((field) => {
+        const textValue = cert.data[field.label] || cert.data[field.key] || '';
+        if (!textValue) return;
+
+        const fontSizePx = (field.fontSize || 18) * scale;
+        const fontStyle = field.isItalic ? 'italic' : 'normal';
+        const fontWeight = field.isBold ? 'bold' : 'normal';
+        const fontFamily = field.fontFamily || 'Georgia, serif';
+
+        ctx.font = `${fontStyle} ${fontWeight} ${fontSizePx}px ${fontFamily}`;
+        ctx.fillStyle = field.color || '#111827';
+        ctx.textAlign = (field.align as CanvasTextAlign) || 'center';
+        ctx.textBaseline = 'middle';
+
+        const posX = (field.x / 100) * naturalWidth;
+        const posY = (field.y / 100) * naturalHeight;
+
+        const textOutput = field.isUppercase ? String(textValue).toUpperCase() : String(textValue);
+        ctx.fillText(textOutput, posX, posY);
+      });
+
+      // 3. Draw Certificate Number
+      if (event.certNoConfig.visible) {
+        const cConfig = event.certNoConfig;
+        const cFontSize = (cConfig.fontSize || 13) * scale;
+        ctx.font = `${cConfig.isBold ? 'bold' : 'normal'} ${cFontSize}px monospace`;
+        ctx.fillStyle = cConfig.color || '#111827';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+
+        const cX = (cConfig.x / 100) * naturalWidth;
+        const cY = (cConfig.y / 100) * naturalHeight;
+        ctx.fillText(cert.certificate_no, cX, cY);
+      }
+
+      // 4. Draw QR Code using existing SVG
+      if (event.qrConfig.visible) {
+        const svgElement = document.getElementById('cert-qr-code-svg');
+        if (svgElement) {
+          const svgData = new XMLSerializer().serializeToString(svgElement);
+          const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+          const URL = window.URL || window.webkitURL || window;
+          const blobURL = URL.createObjectURL(svgBlob);
+
+          await new Promise<void>((resolve) => {
+            const qrImg = new Image();
+            qrImg.onload = () => {
+              const qrSize = (event.qrConfig.size || 75) * scale;
+              const qrX = (event.qrConfig.x / 100) * naturalWidth - qrSize / 2;
+              const qrY = (event.qrConfig.y / 100) * naturalHeight - qrSize / 2;
+              ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+              URL.revokeObjectURL(blobURL);
+              resolve();
+            };
+            qrImg.src = blobURL;
+          });
+        }
+      }
+
+      // 5. Trigger Instant Download
+      const link = document.createElement('a');
+      link.download = `${cert.certificate_no.replace(/[^a-zA-Z0-9_-]/g, '_')}_Official_Certificate.png`;
+      link.href = offscreen.toDataURL('image/png', 1.0);
+      link.click();
+    } catch (err: any) {
+      alert('Certificate download failed: ' + err.message);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   return (
@@ -239,34 +337,46 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               )}
             </div>
 
-            {/* Canvas Zoom Tools (Fit / Zoom In / Zoom Out) */}
-            <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-xl border border-slate-700/80 shrink-0">
-              <button
-                type="button"
-                onClick={() => setZoomLevel(prev => Math.max(0.6, Number((prev - 0.1).toFixed(2))))}
-                className="p-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition cursor-pointer"
-                title="Zoom Out"
-              >
-                <ZoomOut size={13} />
-              </button>
-              
-              <button
-                type="button"
-                onClick={() => setZoomLevel(0.9)}
-                className="px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-400 hover:bg-slate-800 rounded transition cursor-pointer flex items-center gap-0.5"
-                title="Fit Canvas to Viewport"
-              >
-                <Maximize size={10} />
-                <span>{Math.round(zoomLevel * 100)}%</span>
-              </button>
+            {/* Canvas Zoom Tools & Admin Sample Download */}
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-xl border border-slate-700/80">
+                <button
+                  type="button"
+                  onClick={() => setZoomLevel(prev => Math.max(0.6, Number((prev - 0.1).toFixed(2))))}
+                  className="p-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition cursor-pointer"
+                  title="Zoom Out"
+                >
+                  <ZoomOut size={13} />
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => setZoomLevel(1)}
+                  className="px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-400 hover:bg-slate-800 rounded transition cursor-pointer flex items-center gap-0.5"
+                  title="Reset Zoom"
+                >
+                  <Maximize size={10} />
+                  <span>{Math.round(zoomLevel * 100)}%</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setZoomLevel(prev => Math.min(1.4, Number((prev + 0.1).toFixed(2))))}
+                  className="p-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition cursor-pointer"
+                  title="Zoom In"
+                >
+                  <ZoomIn size={13} />
+                </button>
+              </div>
 
               <button
                 type="button"
-                onClick={() => setZoomLevel(prev => Math.min(1.4, Number((prev + 0.1).toFixed(2))))}
-                className="p-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition cursor-pointer"
-                title="Zoom In"
+                disabled={isExporting}
+                onClick={handleDownloadHighRes}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow transition cursor-pointer disabled:opacity-50"
               >
-                <ZoomIn size={13} />
+                {isExporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                <span>{isExporting ? 'Exporting...' : 'Sample 300DPI'}</span>
               </button>
             </div>
 
@@ -676,7 +786,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       )}
 
       {/* 2. CANVA/FIGMA STYLE DESK WORKSPACE - 100% VISIBLE FULL CERTIFICATE VIEW */}
-      <div className="w-full p-4 sm:p-6 md:p-8 bg-[#0a0e17] flex items-center justify-center overflow-auto min-h-[520px] max-h-[72vh]">
+      <div className="w-full p-4 sm:p-6 md:p-8 bg-[#0a0e17] flex items-center justify-center overflow-auto min-h-[520px]">
         <div 
           className="transition-transform duration-150 ease-out origin-center flex items-center justify-center shadow-2xl p-1"
           style={{ transform: `scale(${zoomLevel})` }}
@@ -685,13 +795,16 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
             ref={containerRef}
             id="certificate-print-area"
             className="relative w-[850px] aspect-[1.414/1] bg-white shadow-2xl rounded-sm overflow-hidden select-none border-2 border-slate-700/60 shrink-0"
-            style={{
-              backgroundImage: `url(${event.templateUrl})`,
-              backgroundSize: '100% 100%',
-              backgroundPosition: 'center',
-              backgroundRepeat: 'no-repeat',
-            }}
           >
+            {/* Natural Template Image Base (Guarantees Aspect Ratio & High Resolution) */}
+            <img 
+              ref={imgRef}
+              src={event.templateUrl}
+              alt="Template"
+              crossOrigin="anonymous"
+              className="w-full h-full object-fill pointer-events-none block"
+            />
+
             {event.fields.filter(f => f.visible).map((field) => {
               const textValue = cert.data[field.label] || cert.data[field.key] || '';
               if (!textValue) return null;
@@ -704,10 +817,10 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   draggable={isDraggable}
                   onClick={() => !readOnly && setSelectedElementKey(field.key)}
                   onDragEnd={(e) => handleDragEnd(e, field.key)}
-                  className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all ${
+                  className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-shadow ${
                     !readOnly
                       ? `${isDraggable ? 'cursor-move hover:ring-2 hover:ring-emerald-500' : 'cursor-pointer'} rounded ${
-                          isSelected ? 'ring-2 ring-blue-500 shadow-lg !bg-blue-50/20' : ''
+                          isSelected ? 'ring-2 ring-amber-400 shadow-lg' : ''
                         }`
                       : ''
                   }`}
@@ -730,7 +843,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 className={`absolute transform -translate-y-1/2 ${
                   !readOnly
                     ? `${!event.certNoConfig.isLocked ? 'cursor-move hover:ring-2 hover:ring-emerald-500' : 'cursor-pointer'} rounded p-1 ${
-                        selectedElementKey === '__cert_no__' ? 'ring-2 ring-blue-500 bg-blue-50/20 shadow-md' : ''
+                        selectedElementKey === '__cert_no__' ? 'ring-2 ring-amber-400 shadow-md' : ''
                       }`
                     : ''
                 }`}
@@ -756,16 +869,19 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 className={`absolute transform -translate-x-1/2 -translate-y-1/2 ${
                   !readOnly
                     ? `${!event.qrConfig.isLocked ? 'cursor-move hover:ring-2 hover:ring-emerald-500' : 'cursor-pointer'} rounded p-1 ${
-                        selectedElementKey === '__qr_code__' ? 'ring-2 ring-blue-500 bg-blue-100 shadow-md' : 'bg-white/90'
+                        selectedElementKey === '__qr_code__' ? 'ring-2 ring-amber-400 shadow-md' : ''
                       }`
-                    : 'bg-white p-1 rounded-sm'
+                    : 'p-1 rounded-sm'
                 }`}
                 style={{
                   left: `${event.qrConfig.x}%`,
                   top: `${event.qrConfig.y}%`,
+                  background: 'white',
+                  lineHeight: 0
                 }}
               >
                 <QRCodeSVG
+                  id="cert-qr-code-svg"
                   value={getQrVerificationUrl()}
                   size={event.qrConfig.size}
                   level="M"
@@ -776,6 +892,22 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
           </div>
         </div>
       </div>
+
+      {/* 3. RESTORED DIRECT HIGH-RESOLUTION DOWNLOAD ACTION BAR FOR STUDENTS */}
+      {readOnly && (
+        <div className="p-4 bg-[#0d131f] border-t border-slate-800 flex justify-center items-center">
+          <button
+            type="button"
+            disabled={isExporting}
+            onClick={handleDownloadHighRes}
+            style={{ backgroundColor: '#0f5132' }}
+            className="text-white px-8 py-3.5 rounded-xl font-bold text-sm flex items-center gap-2.5 shadow-xl hover:bg-emerald-800 transition cursor-pointer disabled:opacity-50"
+          >
+            {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+            <span>{isExporting ? 'Generating High-Resolution Certificate...' : 'Download Official Certificate (300 DPI Original)'}</span>
+          </button>
+        </div>
+      )}
 
     </div>
   );
