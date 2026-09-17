@@ -183,23 +183,26 @@ export const UserPortal: React.FC = () => {
         backgroundColor: '#ffffff',
         imageTimeout: 20000,
         onclone: (clonedDoc) => {
-          // 1. Clean oklch colors across the entire document
+          // 1. Universal modern CSS color filter (oklab, oklch, lab, color(srgb))
+          const modernColorRegex = /(oklab|oklch|lab|color\(srgb)/i;
           const allNodes = clonedDoc.querySelectorAll('*');
+
           allNodes.forEach((node) => {
             const htmlEl = node as HTMLElement;
             const style = window.getComputedStyle(htmlEl);
-            if (style.color && style.color.includes('oklch')) {
+            
+            if (modernColorRegex.test(style.color)) {
               htmlEl.style.color = '#111827';
             }
-            if (style.backgroundColor && style.backgroundColor.includes('oklch')) {
+            if (modernColorRegex.test(style.backgroundColor)) {
               htmlEl.style.backgroundColor = 'transparent';
             }
-            if (style.borderColor && style.borderColor.includes('oklch')) {
+            if (modernColorRegex.test(style.borderColor)) {
               htmlEl.style.borderColor = 'transparent';
             }
           });
 
-          // 2. Strict transparent background for child divs (No grey shade)
+          // 2. Strict transparent background for child text divs (No grey shade)
           const targetArea = clonedDoc.getElementById('certificate-print-area');
           if (targetArea) {
             const childDivs = targetArea.querySelectorAll('div');
