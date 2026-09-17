@@ -53,11 +53,11 @@ export const PublicVerification: React.FC = () => {
 
     const cleanTarget = targetId.trim();
 
-    // Flexible & Case-Insensitive Lookup (Supports exact match, URL params, or partial hash)
+    // Exact Case-Insensitive Lookup (Supports exact match)
     const { data: certData, error: certError } = await supabase
       .from('certificates')
       .select('certificate_no, event_id, event_name, issue_date, status, data')
-      .ilike('certificate_no', `%${cleanTarget}%`)
+      .ilike('certificate_no', cleanTarget)
       .maybeSingle();
 
     if (!certError && certData) {
