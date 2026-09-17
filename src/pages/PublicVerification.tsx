@@ -11,8 +11,25 @@ import {
   Search, 
   Camera, 
   Keyboard, 
-  RefreshCw 
+  RefreshCw,
+  ShieldCheck
 } from 'lucide-react';
+
+// Privacy Protection: Fields that should NEVER be exposed publicly on QR scan
+const SENSITIVE_FIELD_KEYS = [
+  'mobile',
+  'phone',
+  'contact',
+  'cell',
+  'email',
+  'reg',
+  'registration',
+  'roll',
+  'aadhaar',
+  'security',
+  'password',
+  'pin'
+];
 
 export const PublicVerification: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -36,7 +53,7 @@ export const PublicVerification: React.FC = () => {
 
     const { data: certData, error: certError } = await supabase
       .from('certificates')
-      .select('*')
+      .select('certificate_no, event_id, event_name, issue_date, status, data')
       .ilike('certificate_no', targetId.trim())
       .maybeSingle();
 
@@ -47,7 +64,7 @@ export const PublicVerification: React.FC = () => {
         event_name: certData.event_name,
         issue_date: certData.issue_date,
         status: certData.status,
-        data: certData.data,
+        data: certData.data || {},
       });
     }
     setLoading(false);
@@ -90,7 +107,6 @@ export const PublicVerification: React.FC = () => {
 
       return () => {
         if (codeReaderRef.current) {
-          // Clean camera stream on unmount
           const stream = videoRef.current?.srcObject as MediaStream;
           stream?.getTracks().forEach((track) => track.stop());
         }
@@ -105,14 +121,20 @@ export const PublicVerification: React.FC = () => {
     executeVerification(inputCertNo.trim());
   };
 
+  // Filter out any sensitive numbers/credentials for public view
+  const publicDisplayEntries = Object.entries(cert?.data || {}).filter(([key]) => {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return !SENSITIVE_FIELD_KEYS.some(sensitive => normalizedKey.includes(sensitive));
+  });
+
   return (
     <div className="min-h-[calc(100vh-140px)] py-8 px-4 flex items-center justify-center">
       <div className="max-w-xl w-full bg-white rounded-3xl p-6 md:p-8 shadow-xl border border-gray-200 space-y-6">
         
         {/* Top Header */}
         <div className="text-center space-y-1">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
-            Official Credential Verification
+          <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 inline-flex items-center gap-1">
+            <ShieldCheck size={13} /> Official Credential Verification
           </span>
           <h2 className="text-xl font-bold text-gray-900 font-serif pt-2">Validate SKUAST-K Certificate</h2>
           <p className="text-xs text-gray-500">Scan physical/digital QR code or enter certificate number directly</p>
@@ -218,15 +240,15 @@ export const PublicVerification: React.FC = () => {
               </div>
             </div>
 
-            {cert.data && (
+            {publicDisplayEntries.length > 0 && (
               <div className="bg-white rounded-2xl p-4 border border-emerald-100 shadow-sm text-xs space-y-1.5">
                 <p className="text-[11px] font-bold text-emerald-900 uppercase tracking-wide border-b pb-1">
-                  Participant Credential Details
+                  Verified Academic Credentials
                 </p>
-                {Object.entries(cert.data).map(([k, val]) => (
+                {publicDisplayEntries.map(([k, val]) => (
                   <div key={k} className="flex justify-between py-0.5">
                     <span className="text-gray-500 capitalize">{k.replace(/_/g, ' ')}:</span>
-                    <span className="font-bold text-gray-800 text-right">{val}</span>
+                    <span className="font-bold text-gray-800 text-right">{String(val)}</span>
                   </div>
                 ))}
               </div>
