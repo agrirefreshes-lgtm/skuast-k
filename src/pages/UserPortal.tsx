@@ -101,26 +101,22 @@ export const UserPortal: React.FC = () => {
         const recordData = c.data || {};
         
         // Normalize keys and user inputs (strip spaces, lowercase)
-        const normalize = (str: any) => String(str || '').trim().toLowerCase();
+        const normalize = (str: any) => String(str || '').trim().toLowerCase().replace(/\s+/g, ' ');
         
         const cleanUserPrimary = normalize(primaryInput);
         const cleanUserSecurity = normalize(securityInput);
 
-        let foundPrimary = false;
-        let foundSecurity = false;
+        const pKey = currentEvent.primaryAuthField || (currentEvent.fields[0]?.label ?? '');
+        const sKey = currentEvent.securityAuthField || (currentEvent.fields[1]?.label ?? '');
 
-        for (const [, val] of Object.entries(recordData)) {
-          const valStr = normalize(val);
-          if (valStr === cleanUserPrimary) {
-            foundPrimary = true;
-          }
-          if (valStr === cleanUserSecurity) {
-            foundSecurity = true;
-          }
-        }
+        const pVal = recordData[pKey] || '';
+        const sVal = recordData[sKey] || '';
+
+        const foundPrimary = normalize(pVal) === cleanUserPrimary || normalize(c.certificate_no) === cleanUserPrimary;
+        const foundSecurity = normalize(sVal) === cleanUserSecurity;
 
         // If primary and security are the same field or single field check
-        if (currentEvent.primaryAuthField === currentEvent.securityAuthField || !cleanUserSecurity) {
+        if (pKey === sKey || !cleanUserSecurity) {
           return foundPrimary;
         }
 

@@ -368,18 +368,31 @@ export const AdminDashboard: React.FC = () => {
     setUploadingImage(false);
   };
 
+  const saveEventToDb = useCallback(
+    (() => {
+      let timeoutId: any;
+      return (updated: EventItem) => {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(async () => {
+          await supabase.from('events').update({
+            fields: updated.fields,
+            primary_auth_field: updated.primaryAuthField,
+            security_auth_field: updated.securityAuthField,
+            qr_config: updated.qrConfig,
+            cert_no_config: updated.certNoConfig,
+          }).eq('id', updated.id);
+        }, 500);
+      };
+    })(),
+    []
+  );
+
   const handleUpdateEvent = async (updated: EventItem) => {
     const userId = await verifyLiveSession();
     if (!userId) return;
 
     setEvents(events.map((ev) => (ev.id === updated.id ? updated : ev)));
-    await supabase.from('events').update({
-      fields: updated.fields,
-      primary_auth_field: updated.primaryAuthField,
-      security_auth_field: updated.securityAuthField,
-      qr_config: updated.qrConfig,
-      cert_no_config: updated.certNoConfig,
-    }).eq('id', updated.id);
+    saveEventToDb(updated);
   };
 
   const handleExcelParsed = async (records: Record<string, string>[], columns: string[], fileName: string) => {
