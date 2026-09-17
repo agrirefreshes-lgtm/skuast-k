@@ -43,7 +43,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedElementKey, setSelectedElementKey] = useState<string | null>(null);
 
-  // Exact GitHub Pages path builder for QR (Prevents 404 across both Google Lens and Inbuilt Scanner)
   const getQrVerificationUrl = () => {
     const basePath = window.location.href.split('#')[0].replace(/\/+$/, '');
     return `${basePath}/#/verify?id=${encodeURIComponent(cert.certificate_no)}`;
@@ -63,16 +62,13 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       currentFontSize = Math.max(10, Math.floor(currentFontSize * scale));
     }
 
-    // Single seamless background - eliminates grey highlight band
-    const safeBg = (field.backgroundColor && field.backgroundColor !== 'transparent' && field.backgroundColor !== '#ffffff')
-      ? field.backgroundColor
-      : 'transparent';
+    const hasHighlight = field.backgroundColor && field.backgroundColor !== 'transparent' && field.backgroundColor !== '#ffffff';
 
     return {
       fontSize: `${currentFontSize}px`,
       lineHeight: field.lineHeight || 1.35,
       color: field.color || '#111827',
-      backgroundColor: safeBg,
+      backgroundColor: hasHighlight ? field.backgroundColor : 'transparent',
       fontFamily: field.fontFamily || 'Georgia, serif',
       fontWeight: field.isBold ? ('bold' as const) : ('normal' as const),
       fontStyle: field.isItalic ? ('italic' as const) : ('normal' as const),
@@ -80,8 +76,8 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       textAlign: (field.align || 'center') as any,
       width: `${maxAllowedWidth}px`,
       maxWidth: '96%',
-      padding: safeBg === 'transparent' ? '0px' : '2px 8px',
-      borderRadius: safeBg === 'transparent' ? '0px' : '4px',
+      padding: hasHighlight ? '2px 8px' : '0px',
+      borderRadius: hasHighlight ? '4px' : '0px',
       display: '-webkit-box',
       WebkitBoxOrient: 'vertical' as const,
       WebkitLineClamp: maxLines,
@@ -131,8 +127,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
 
   return (
     <div className="space-y-4">
-      
-      {/* Quick Element Selection Bar */}
       {!readOnly && (
         <div className="bg-slate-800 p-3 rounded-2xl border border-slate-700 flex flex-wrap items-center justify-between gap-3 shadow-sm">
           <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
@@ -196,7 +190,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
           backgroundRepeat: 'no-repeat',
         }}
       >
-        {/* Dynamic Fields */}
         {event.fields.filter(f => f.visible).map((field) => {
           const textValue = cert.data[field.label] || cert.data[field.key] || '';
           if (!textValue) return null;
@@ -226,7 +219,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
           );
         })}
 
-        {/* Certificate Number */}
         {event.certNoConfig.visible && (
           <div
             draggable={!readOnly}
@@ -253,7 +245,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
           </div>
         )}
 
-        {/* QR Code */}
         {event.qrConfig.visible && (
           <div
             draggable={!readOnly}
@@ -281,7 +272,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
         )}
       </div>
 
-      {/* Dynamic Inspector Ribbon for Regular Text Fields */}
       {!readOnly && selectedField && (
         <div className="bg-slate-900 border border-slate-700 text-slate-100 p-4 rounded-2xl shadow-2xl space-y-3 animate-in fade-in duration-200">
           <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
@@ -434,7 +424,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               <button
                 onClick={() => updateSelectedField({ maxLines: selectedField.maxLines === 1 ? 2 : selectedField.maxLines === 2 ? 3 : 1 })}
                 className="bg-slate-700 text-amber-400 px-2 py-0.5 rounded font-mono font-bold cursor-pointer"
-                title="Toggle Max Allowed Lines"
               >
                 {selectedField.maxLines || 2}L
               </button>
@@ -445,28 +434,24 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               <button
                 onClick={() => updateSelectedField({ x: Math.max(0, Number((selectedField.x - 0.2).toFixed(2))) })}
                 className="p-1 hover:bg-slate-700 rounded transition cursor-pointer"
-                title="Move Left 0.2%"
               >
                 <ArrowLeft size={13} />
               </button>
               <button
                 onClick={() => updateSelectedField({ y: Math.max(0, Number((selectedField.y - 0.2).toFixed(2))) })}
                 className="p-1 hover:bg-slate-700 rounded transition cursor-pointer"
-                title="Move Up 0.2%"
               >
                 <ArrowUp size={13} />
               </button>
               <button
                 onClick={() => updateSelectedField({ y: Math.min(100, Number((selectedField.y + 0.2).toFixed(2))) })}
                 className="p-1 hover:bg-slate-700 rounded transition cursor-pointer"
-                title="Move Down 0.2%"
               >
                 <ArrowDown size={13} />
               </button>
               <button
                 onClick={() => updateSelectedField({ x: Math.min(100, Number((selectedField.x + 0.2).toFixed(2))) })}
                 className="p-1 hover:bg-slate-700 rounded transition cursor-pointer"
-                title="Move Right 0.2%"
               >
                 <ArrowRight size={13} />
               </button>
@@ -475,7 +460,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
         </div>
       )}
 
-      {/* Dedicated Inspector for Certificate Number */}
       {!readOnly && selectedElementKey === '__cert_no__' && onUpdateEvent && (
         <div className="bg-slate-900 border border-slate-700 text-slate-100 p-4 rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-3 text-xs animate-in fade-in">
           <div className="flex items-center gap-2">
@@ -552,7 +536,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
         </div>
       )}
 
-      {/* Dedicated Inspector for QR Code */}
       {!readOnly && selectedElementKey === '__qr_code__' && onUpdateEvent && (
         <div className="bg-slate-900 border border-slate-700 text-slate-100 p-4 rounded-2xl shadow-2xl flex flex-wrap items-center justify-between gap-3 text-xs animate-in fade-in">
           <div className="flex items-center gap-2">
@@ -610,7 +593,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
           </div>
         </div>
       )}
-
     </div>
   );
 };

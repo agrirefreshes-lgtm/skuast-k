@@ -70,7 +70,6 @@ export const UserPortal: React.FC = () => {
     fetchEvents();
   }, []);
 
-  // Filter and Group events by Year & Month using the events state
   const groupedEvents = useMemo(() => {
     const filtered = events.filter((ev) => 
       ev.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -143,7 +142,6 @@ export const UserPortal: React.FC = () => {
     }
   };
 
-  // Helper: Image URL to Base64 to bypass CORS issues cleanly
   const toDataURL = async (url: string): Promise<string> => {
     try {
       const response = await fetch(url, { cache: 'no-cache' });
@@ -166,74 +164,43 @@ export const UserPortal: React.FC = () => {
     }
 
     setDownloading(true);
+    const originalBg = printArea.style.backgroundImage;
 
     try {
-      await document.fonts.ready;
-      await new Promise((res) => setTimeout(res, 200));
+      if (selectedEvent.templateUrl) {
+        const safeBase64 = await toDataURL(selectedEvent.templateUrl);
+        printArea.style.backgroundImage = `url("${safeBase64}")`;
+      }
 
-      // 1. Capture text & QR layer as 100% Transparent Overlay (No CSS background bleed or shade)
-      const overlayCanvas = await html2canvas(printArea, {
+      await document.fonts.ready;
+      await new Promise((res) => setTimeout(res, 250));
+
+      const canvas = await html2canvas(printArea, {
         scale: 2,
         useCORS: true,
         allowTaint: false,
         logging: false,
-        backgroundColor: null, // STRICTLY TRANSPARENT - Eliminates any grey box/backdrop
-        onclone: (_, clonedEl) => {
-          // Remove background image and colors from clone completely
-          clonedEl.style.backgroundImage = 'none';
-          clonedEl.style.backgroundColor = 'transparent';
-          clonedEl.style.boxShadow = 'none';
-
-          const allElements = clonedEl.querySelectorAll('*');
-          allElements.forEach((el) => {
-            const htmlEl = el as HTMLElement;
-            // QR code ke white container ko chhod kar baaki sab clean transparent
-            if (!htmlEl.classList.contains('bg-white')) {
-              htmlEl.style.backgroundColor = 'transparent';
-            }
-            htmlEl.style.boxShadow = 'none';
-
-            // Modern oklch color parsing crash protection
-            const style = window.getComputedStyle(htmlEl);
-            if (style.color && style.color.includes('oklch')) {
-              htmlEl.style.color = '#111827';
-            }
-            if (style.borderColor && style.borderColor.includes('oklch')) {
-              htmlEl.style.borderColor = 'transparent';
-            }
-          });
-        }
+        backgroundColor: '#ffffff',
       });
 
-      const overlayImgData = overlayCanvas.toDataURL('image/png');
+      const imgData = canvas.toDataURL('image/png', 1.0);
 
-      // 2. Load the original template image cleanly as Base64
-      let bgImgData = selectedEvent.templateUrl;
-      try {
-        bgImgData = await toDataURL(selectedEvent.templateUrl);
-      } catch (e) {
-        console.warn('Fallback to direct url', e);
-      }
-
-      // 3. Construct clean A4 PDF (Layer 1: Pure Original Template, Layer 2: Text/QR Overlay)
       const pdf = new jsPDF({
         orientation: 'landscape',
-        unit: 'mm',
-        format: 'a4',
+        unit: 'px',
+        format: [canvas.width, canvas.height],
       });
 
-      // Layer 1: Pristine Original Template Image (297mm x 210mm)
-      pdf.addImage(bgImgData, 'JPEG', 0, 0, 297, 210, undefined, 'FAST');
-
-      // Layer 2: Crisp Transparent Text/QR Stamp Over Template
-      pdf.addImage(overlayImgData, 'PNG', 0, 0, 297, 210, undefined, 'FAST');
-
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
       const cleanFileName = (matchedCert.certificate_no || 'Certificate').replace(/[^a-zA-Z0-9_-]/g, '_');
       pdf.save(`${cleanFileName}.pdf`);
     } catch (err: any) {
       console.error('PDF Generation Error:', err);
-      alert('Certificate download fail ho gaya: ' + (err.message || 'Color parsing or rendering error'));
+      alert('Certificate download fail ho gaya: ' + (err.message || 'Rendering error'));
     } finally {
+      if (printArea) {
+        printArea.style.backgroundImage = originalBg;
+      }
       setDownloading(false);
     }
   };
@@ -261,7 +228,6 @@ export const UserPortal: React.FC = () => {
         </div>
 
         {!selectedEvent ? (
-          /* Event Directory */
           <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-200 space-y-6">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
@@ -271,7 +237,6 @@ export const UserPortal: React.FC = () => {
                 <p className="text-xs text-gray-500 mt-0.5">Explore scheduled conferences and workshops categorized by Year and Month</p>
               </div>
 
-              {/* Event Filter using the events array */}
               <div className="relative max-w-xs w-full">
                 <Search size={15} className="absolute left-3 top-3 text-gray-400" />
                 <input
@@ -335,7 +300,6 @@ export const UserPortal: React.FC = () => {
             )}
           </div>
         ) : (
-          /* 2-Factor Authentication Card */
           <div className="space-y-6">
             <button
               onClick={() => setSelectedEvent(null)}
@@ -402,7 +366,6 @@ export const UserPortal: React.FC = () => {
                   </button>
                 </form>
               ) : (
-                /* Authenticated State: Verification Banner, Live Canvas & Download Trigger */
                 <div className="space-y-6">
                   <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
                     <div className="flex items-center gap-3">
@@ -432,7 +395,6 @@ export const UserPortal: React.FC = () => {
                     </button>
                   </div>
 
-                  {/* Visual Render Canvas */}
                   <div className="bg-slate-50 p-2 sm:p-4 md:p-6 rounded-2xl border border-gray-200 overflow-hidden">
                     <CertificateCanvas
                       event={selectedEvent}
