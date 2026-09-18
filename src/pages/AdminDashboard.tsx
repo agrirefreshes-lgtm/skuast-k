@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import type { EventItem, IssuedCertificate, DynamicFieldDef, UploadedBatch } from '../types/certificate';
 import { ExcelUploader } from '../components/ExcelUploader';
@@ -141,49 +141,53 @@ export const AdminDashboard: React.FC = () => {
     }
   }, []);
 
+  // Load profile + events from a verified session
+  const loadProfile = async (session: any) => {
+    const { data: profile } = await supabase
+      .from('admin_profiles')
+      .select('id, email, role, department')
+      .eq('id', session.user.id)
+      .maybeSingle();
+
+    const userEmail = session.user.email?.toLowerCase() || '';
+    const isSuper = profile?.role === 'super_admin' || userEmail.includes('superadmin');
+
+    const resolvedProfile = {
+      id: session.user.id,
+      email: session.user.email || 'Admin',
+      role: isSuper ? 'super_admin' : (profile?.role || 'event_admin'),
+      department: isSuper ? 'Central Administration' : (profile?.department || 'Academic Department')
+    };
+
+    setUserProfile(resolvedProfile);
+
+    if (resolvedProfile.role === 'super_admin') {
+      await loadAdminDirectory();
+    } else {
+      await loadEvents();
+    }
+    setLoading(false);
+  };
+
+  // On mount: check for existing session (page refresh / back navigation)
   useEffect(() => {
-    const initAuth = async () => {
+    const checkExistingSession = async () => {
       setLoading(true);
       const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.user) {
+
+      if (session?.user) {
+        setIsAuthenticated(true);
+        sessionStorage.setItem('skuastk_admin_auth', 'true');
+        await loadProfile(session);
+      } else {
         sessionStorage.removeItem('skuastk_admin_auth');
         setIsAuthenticated(false);
         setLoading(false);
-        return;
       }
-
-      setIsAuthenticated(true);
-      sessionStorage.setItem('skuastk_admin_auth', 'true');
-
-      const { data: profile } = await supabase
-        .from('admin_profiles')
-        .select('id, email, role, department')
-        .eq('id', session.user.id)
-        .maybeSingle();
-
-      const userEmail = session.user.email?.toLowerCase() || '';
-      const isSuper = profile?.role === 'super_admin' || userEmail.includes('superadmin');
-
-      const resolvedProfile: AdminProfile = {
-        id: session.user.id,
-        email: session.user.email || 'Admin',
-        role: isSuper ? 'super_admin' : (profile?.role || 'event_admin'),
-        department: isSuper ? 'Central Administration' : (profile?.department || 'Academic Department')
-      };
-
-      setUserProfile(resolvedProfile);
-
-      if (resolvedProfile.role === 'super_admin') {
-        await loadAdminDirectory();
-      } else {
-        await loadEvents();
-      }
-      setLoading(false);
     };
 
-    initAuth();
-  }, [loadAdminDirectory, loadEvents]);
+    checkExistingSession();
+  }, []);
 
   useEffect(() => {
     if (userProfile && userProfile.role !== 'super_admin' && selectedEventId) {
@@ -202,13 +206,36 @@ export const AdminDashboard: React.FC = () => {
     setAdminList([]);
   };
 
+  const handleLoginSuccess = async (session?: any) => {
+    setLoading(true);
+    try {
+      let sessionToUse = session;
+
+      if (!sessionToUse) {
+        const { data: { session: fetchedSession }, error } = await supabase.auth.getSession();
+        if (error || !fetchedSession?.user) {
+          setLoading(false);
+          alert('Session verification failed. Please try again.');
+          return;
+        }
+        sessionToUse = fetchedSession;
+      }
+
+      setIsAuthenticated(true);
+      sessionStorage.setItem('skuastk_admin_auth', 'true');
+      await loadProfile(sessionToUse);
+      await loadProfile(sessionToUse);
+    } catch (err) {
+      setLoading(false);
+      console.error('Login success error:', err);
+      alert('Authentication error. Please try again.');
+    }
+  };
+
   if (!isAuthenticated) {
     return (
-      <AdminLogin 
-        onAuthenticated={() => {
-          setIsAuthenticated(true);
-          sessionStorage.setItem('skuastk_admin_auth', 'true');
-        }} 
+      <AdminLogin
+        onAuthenticated={handleLoginSuccess}
       />
     );
   }
@@ -764,7 +791,7 @@ export const AdminDashboard: React.FC = () => {
                       <input 
                         type="password"
                         required
-                        placeholder="••••••••••••"
+                        placeholder="ΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇó"
                         value={newAdminPassword}
                         onChange={(e) => setNewAdminPassword(e.target.value)}
                         className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
@@ -904,7 +931,7 @@ export const AdminDashboard: React.FC = () => {
                       }`}
                       title="Click to toggle public student download access"
                     >
-                      {isCurrentEventDownloadsActive ? '✓ Downloads Live' : '⏸ Downloads Paused'}
+                      {isCurrentEventDownloadsActive ? 'Γ£ô Downloads Live' : 'ΓÅ╕ Downloads Paused'}
                     </button>
                   )}
                 </div>
