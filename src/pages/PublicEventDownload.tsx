@@ -36,8 +36,12 @@ export const PublicEventDownload: React.FC = () => {
           batches: data.batches || [],
           primaryAuthField: data.primary_auth_field || '',
           securityAuthField: data.security_auth_field || '',
-          qrConfig: data.qr_config,
-          certNoConfig: data.cert_no_config,
+          qrConfig: data.qr_config || { x: 80, y: 75, size: 75, visible: true },
+          certNoConfig: data.cert_no_config || { x: 8, y: 92, fontSize: 13, color: '#222222', isBold: false, visible: true },
+          isDownloadEnabled: data.is_download_enabled ?? true,
+          isPublished: data.is_published ?? false,
+          publishedAt: data.published_at || undefined,
+          created_at: data.created_at
         });
       }
       setLoadingEvent(false);
@@ -50,6 +54,13 @@ export const PublicEventDownload: React.FC = () => {
     e.preventDefault();
     if (!event) return;
 
+    if (!event.isPublished || event.isDownloadEnabled === false) {
+      setSearching(false);
+      setSearched(true);
+      setMatchedCert(null);
+      return;
+    }
+
     setSearching(true);
     setSearched(true);
 
@@ -58,7 +69,8 @@ export const PublicEventDownload: React.FC = () => {
     const { data: certsList, error } = await supabase
       .from('certificates')
       .select('*')
-      .eq('event_id', event.id);
+      .eq('event_id', event.id)
+      .eq('status', 'verified');
 
     if (!error && certsList) {
       const pKey = event.primaryAuthField || (event.fields[0]?.label ?? '');
@@ -116,6 +128,7 @@ export const PublicEventDownload: React.FC = () => {
 
   const primaryLabel = event.primaryAuthField || event.fields[0]?.label || 'Candidate Name';
   const securityLabel = event.securityAuthField || event.fields[1]?.label || 'Security Verification';
+  const isActive = event.isDownloadEnabled !== false && event.isPublished !== false;
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
@@ -139,6 +152,11 @@ export const PublicEventDownload: React.FC = () => {
             <p className="text-xs text-slate-500 max-w-md mx-auto">
               Certificate nikalne ke liye dono security fields enter karein.
             </p>
+            {!isActive && (
+              <p className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 max-w-md mx-auto">
+                Ye event abhi draft/pause mode me hai. Event Coordinator ke Publish karne ke baad hi download hoga.
+              </p>
+            )}
           </div>
 
           <form onSubmit={handleSearchAndDownload} className="space-y-4 max-w-md mx-auto">
@@ -171,9 +189,9 @@ export const PublicEventDownload: React.FC = () => {
 
             <button
               type="submit"
-              disabled={searching}
+              disabled={searching || !isActive}
               style={{ backgroundColor: '#0f5132' }}
-              className="w-full py-3 text-white text-xs font-bold rounded-xl shadow hover:opacity-90 transition cursor-pointer flex items-center justify-center gap-2"
+              className="w-full py-3 text-white text-xs font-bold rounded-xl shadow hover:opacity-90 transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {searching ? <Loader2 className="animate-spin" size={15} /> : <Download size={15} />}
               {searching ? 'Verifying...' : 'Authenticate & Access Certificate'}

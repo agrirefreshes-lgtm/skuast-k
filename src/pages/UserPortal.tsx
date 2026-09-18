@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { CertificateCanvas } from '../components/CertificateCanvas';
@@ -11,6 +11,7 @@ import {
   Building, 
   Lock,
   PauseCircle,
+  Calendar,
   FileCheck
 } from 'lucide-react';
 
@@ -20,6 +21,11 @@ export const UserPortal: React.FC = () => {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [loadingEvents, setLoadingEvents] = useState<boolean>(true);
+
+  // Filter states (Year + Month + Search) for event directory
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedYear, setSelectedYear] = useState<string>('all');
+  const [selectedMonth, setSelectedMonth] = useState<string>('all');
 
   // Form Inputs
   const [primaryInput, setPrimaryInput] = useState<string>('');
@@ -31,11 +37,49 @@ export const UserPortal: React.FC = () => {
   const [activeCert, setActiveCert] = useState<IssuedCertificate | null>(null);
   const [activeEvent, setActiveEvent] = useState<EventItem | null>(null);
 
+  const MONTHS = [
+    { value: 'all', label: 'All Months' },
+    { value: '0', label: 'January' },
+    { value: '1', label: 'February' },
+    { value: '2', label: 'March' },
+    { value: '3', label: 'April' },
+    { value: '4', label: 'May' },
+    { value: '5', label: 'June' },
+    { value: '6', label: 'July' },
+    { value: '7', label: 'August' },
+    { value: '8', label: 'September' },
+    { value: '9', label: 'October' },
+    { value: '10', label: 'November' },
+    { value: '11', label: 'December' },
+  ];
+
+  const getEventYear = (ev: EventItem): string => {
+    if (ev.created_at) {
+      const d = new Date(ev.created_at);
+      if (!isNaN(d.getTime())) return String(d.getFullYear());
+    }
+    const match = ev.certPrefix.match(/(19|20)\d{2}/);
+    if (match) return match[0];
+    return 'Unknown';
+  };
+
+  const getEventMonthIndex = (ev: EventItem): number | null => {
+    if (ev.created_at) {
+      const d = new Date(ev.created_at);
+      if (!isNaN(d.getTime())) return d.getMonth();
+    }
+    return null;
+  };
+
   // Load events
   useEffect(() => {
     const fetchEvents = async () => {
       setLoadingEvents(true);
-      const { data, error } = await supabase.from('events').select('*');
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .eq('is_published', true)
+        .order('created_at', { ascending: false });
       if (!error && data) {
         const formatted: EventItem[] = data.map((e: any) => ({
           id: e.id,
@@ -45,12 +89,15 @@ export const UserPortal: React.FC = () => {
           templateUrl: e.template_url,
           fields: e.fields || [],
           batches: e.batches || [],
-          primaryAuthField: e.primary_auth_field || 'Student Name',
-          securityAuthField: e.security_auth_field || 'Student Name',
+          primaryAuthField: e.primary_auth_field || '',
+          securityAuthField: e.security_auth_field || '',
           qrConfig: e.qr_config || { x: 80, y: 75, size: 75, visible: true },
           certNoConfig: e.cert_no_config || { x: 8, y: 92, fontSize: 13, color: '#222222', isBold: false, visible: true },
-          isDownloadEnabled: e.is_download_enabled ?? true
-        } as any));
+          isDownloadEnabled: e.is_download_enabled ?? true,
+          isPublished: e.is_published ?? false,
+          publishedAt: e.published_at || undefined,
+          created_at: e.created_at
+        }));
 
         setEvents(formatted);
 
@@ -69,7 +116,36 @@ export const UserPortal: React.FC = () => {
   }, [eventSlug]);
 
   const currentEvent = events.find(e => e.id === selectedEventId) || events[0];
-  const isDownloadsActive = (currentEvent as any)?.isDownloadEnabled !== false;
+  const isDownloadsActive = currentEvent?.isDownloadEnabled !== false;
+
+  const availableYears = useMemo(() => {
+    const years = new Set<string>();
+    events.forEach((ev) => years.add(getEventYear(ev)));
+    return Array.from(years).sort((a, b) => b.localeCompare(a));
+  }, [events]);
+
+  const filteredEvents = useMemo(() => {
+    return events.filter((ev) => {
+      if (selectedYear !== 'all' && getEventYear(ev) !== selectedYear) return false;
+      if (selectedMonth !== 'all') {
+        const monthIdx = getEventMonthIndex(ev);
+        if (monthIdx === null) {
+          if (selectedMonth !== 'all') return true;
+        } else if (String(monthIdx) !== selectedMonth) {
+          return false;
+        }
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        return (
+          ev.name.toLowerCase().includes(q) ||
+          (ev.slug || '').toLowerCase().includes(q) ||
+          (ev.certPrefix || '').toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [events, selectedYear, selectedMonth, searchQuery]);
 
   const handleAuthenticate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,7 +165,8 @@ export const UserPortal: React.FC = () => {
       const { data: certsData, error: certsErr } = await supabase
         .from('certificates')
         .select('*')
-        .eq('event_id', currentEvent.id);
+        .eq('event_id', currentEvent.id)
+        .eq('status', 'verified');
 
       if (certsErr) throw certsErr;
       if (!certsData || certsData.length === 0) {
@@ -182,9 +259,67 @@ export const UserPortal: React.FC = () => {
           ) : (
             <form onSubmit={handleAuthenticate} className="max-w-xl mx-auto space-y-4">
               
+              {/* Event Filters: Year + Month + Search */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Select Year</label>
+                  <select
+                    value={selectedYear}
+                    onChange={(e) => {
+                      setSelectedYear(e.target.value);
+                      setActiveCert(null);
+                      setErrorMsg(null);
+                    }}
+                    className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none bg-white font-medium text-slate-800"
+                  >
+                    <option value="all">All Years</option>
+                    {availableYears.map((yr) => (
+                      <option key={yr} value={yr}>{yr}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center gap-1">
+                    <Calendar size={12} className="text-emerald-700" /> Month
+                  </label>
+                  <select
+                    value={selectedMonth}
+                    onChange={(e) => {
+                      setSelectedMonth(e.target.value);
+                      setActiveCert(null);
+                      setErrorMsg(null);
+                    }}
+                    className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none bg-white font-medium text-slate-800"
+                  >
+                    {MONTHS.map((m) => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Search Event</label>
+                  <div className="relative">
+                    <Search size={14} className="absolute left-3 top-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        setActiveCert(null);
+                        setErrorMsg(null);
+                      }}
+                      placeholder="Event name / slug / prefix..."
+                      className="w-full text-xs pl-9 pr-3 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* Event Selector */}
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Select University Event</label>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Select University Event ({filteredEvents.length} found)
+                </label>
                 <select
                   value={selectedEventId}
                   onChange={(e) => {
@@ -194,9 +329,12 @@ export const UserPortal: React.FC = () => {
                   }}
                   className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none bg-slate-50 font-medium text-slate-800"
                 >
-                  {events.map((ev: any) => (
+                  {filteredEvents.length === 0 && (
+                    <option value="">-- No events match this year/month/search --</option>
+                  )}
+                  {filteredEvents.map((ev: any) => (
                     <option key={ev.id} value={ev.id}>
-                      {ev.name} ({ev.certPrefix}) {ev.isDownloadEnabled === false ? '[PAUSED]' : ''}
+                      {ev.name} ({ev.certPrefix}) [{getEventYear(ev)}]{ev.isDownloadEnabled === false ? ' [PAUSED]' : ''}
                     </option>
                   ))}
                 </select>
