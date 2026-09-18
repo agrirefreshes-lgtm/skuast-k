@@ -1,6 +1,8 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
+import jsPDF from 'jspdf';
 import type { EventItem, IssuedCertificate, DynamicFieldDef } from '../types/certificate';
 import { QRCodeSVG } from 'qrcode.react';
+import { getVerifyUrl } from '../lib/shareUrl';
 import { 
   Bold, 
   Italic, 
@@ -51,10 +53,9 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   // Smooth Live Mouse Dragging State
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
 
-  const getQrVerificationUrl = () => {
-    const basePath = window.location.href.split('#')[0].replace(/\/+$/, '');
-    return `${basePath}/#/verify?id=${encodeURIComponent(cert.certificate_no)}`;
-  };
+  const getQrVerificationUrl = useCallback(() => {
+    return getVerifyUrl(cert.certificate_no);
+  }, [cert.certificate_no]);
 
   // Mouse Drag Logic (Smooth and Pixel-Accurate, No native drag-ghost issues)
   const handleMouseDown = (key: string, e: React.MouseEvent) => {
@@ -114,6 +115,54 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
 
   const selectedField = event.fields.find(f => f.key === selectedElementKey);
 
+  const splitExportLines = (
+    drawCtx: CanvasRenderingContext2D,
+    text: string,
+    maxWidthPx: number,
+    letterSpacing: number
+  ): string[] => {
+    const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
+    if (!clean) return [''];
+    if (!maxWidthPx || maxWidthPx <= 0) return [clean];
+
+    const measure = (value: string): number => {
+      let width = drawCtx.measureText(value).width;
+      if (letterSpacing && value.length > 0) {
+        width += letterSpacing * (value.length - 1);
+      }
+      return width;
+    };
+
+    const words = clean.split(' ');
+    const lines: string[] = [];
+    let current = '';
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (measure(candidate) <= maxWidthPx) {
+        current = candidate;
+      } else {
+        if (current) lines.push(current);
+        if (drawCtx.measureText(word).width > maxWidthPx && word.length > 1) {
+          let chunk = '';
+          for (const ch of word) {
+            const next = chunk + ch;
+            if (measure(next) <= maxWidthPx) {
+              chunk = next;
+            } else {
+              if (chunk) lines.push(chunk);
+              chunk = ch;
+            }
+          }
+          current = chunk;
+        } else {
+          current = word;
+        }
+      }
+    }
+    if (current) lines.push(current);
+    return lines.length > 0 ? lines : [clean];
+  };
+
   const updateSelectedField = (updates: Partial<DynamicFieldDef>) => {
     if (!onUpdateEvent || !selectedElementKey) return;
     const updatedFields = event.fields.map(f =>
@@ -153,17 +202,73 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
         const fontStyle = field.isItalic ? 'italic' : 'normal';
         const fontWeight = field.isBold ? 'bold' : 'normal';
         const fontFamily = field.fontFamily || 'Georgia, serif';
+        const letterSpacing = field.letterSpacing || 0;
+        const rotation = field.rotation || 0;
 
-        ctx.font = `${fontStyle} ${fontWeight} ${fontSizePx}px ${fontFamily}`;
+        const fontString = `${fontStyle} ${fontWeight} ${fontSizePx}px ${fontFamily}`;
+        const maxWidthPx = (field.maxWidth || 750) * scale;
+        const maxLines = field.maxLines;
+
+        ctx.font = fontString;
         ctx.fillStyle = field.color || '#111827';
         ctx.textAlign = (field.align as CanvasTextAlign) || 'center';
         ctx.textBaseline = 'middle';
 
         const posX = (field.x / 100) * naturalWidth;
         const posY = (field.y / 100) * naturalHeight;
-
         const textOutput = field.isUppercase ? String(textValue).toUpperCase() : String(textValue);
-        ctx.fillText(textOutput, posX, posY);
+
+        const lines = splitExportLines(ctx, textOutput, maxWidthPx, letterSpacing * scale);
+        const configuredMax = maxLines ?? 3;
+        const limit = configuredMax > 0 ? configuredMax : 1;
+        const limited =
+          lines.length > limit
+            ? [...lines.slice(0, limit - 1), `${lines[limit - 1]}...`]
+            : lines;
+
+        ctx.save();
+        ctx.translate(posX, posY);
+        if (rotation) {
+          ctx.rotate((rotation * Math.PI) / 180);
+        }
+
+        const lineHeightPx = (field.lineHeight || 24) * scale;
+        const startY = -(limited.length - 1) * (lineHeightPx / 2);
+
+        limited.forEach((line, index) => {
+          let drawX = 0;
+          if (field.align === 'left') {
+            drawX = 0;
+            ctx.textAlign = 'left';
+          } else if (field.align === 'right') {
+            drawX = 0;
+            ctx.textAlign = 'right';
+          } else {
+            drawX = 0;
+            ctx.textAlign = 'center';
+          }
+
+          const lineY = startY + index * lineHeightPx;
+          if (letterSpacing && line.length > 1) {
+            const prevAlign = ctx.textAlign;
+            ctx.textAlign = 'left';
+            const measured =
+              ctx.measureText(line).width + letterSpacing * scale * (line.length - 1);
+            let startX = 0;
+            if (prevAlign === 'center') startX = -measured / 2;
+            if (prevAlign === 'right') startX = -measured;
+            let cursorX = startX;
+            line.split('').forEach((ch) => {
+              ctx.fillText(ch, cursorX, lineY);
+              cursorX += ctx.measureText(ch).width + letterSpacing * scale;
+            });
+            ctx.textAlign = prevAlign;
+          } else {
+            ctx.fillText(line, drawX, lineY);
+          }
+        });
+
+        ctx.restore();
       });
 
       // 3. Draw Certificate Number
@@ -204,11 +309,31 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
         }
       }
 
-      // 5. Download PNG
-      const link = document.createElement('a');
-      link.download = `${cert.certificate_no.replace(/[^a-zA-Z0-9_-]/g, '_')}_Official_Certificate.png`;
-      link.href = offscreen.toDataURL('image/png', 1.0);
-      link.click();
+      // 5. Export: PNG + print-ready PDF (Ultra-HD, full template resolution)
+      const safeName = cert.certificate_no.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      const pngLink = document.createElement('a');
+      pngLink.download = `${safeName}_Official_Certificate.png`;
+      pngLink.href = offscreen.toDataURL('image/png', 1.0);
+      pngLink.click();
+
+      const pdf = new jsPDF({
+        orientation: naturalWidth >= naturalHeight ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [naturalWidth, naturalHeight],
+        hotfixes: ['px_scaling'],
+      });
+      pdf.addImage(
+        offscreen.toDataURL('image/jpeg', 1.0),
+        'JPEG',
+        0,
+        0,
+        naturalWidth,
+        naturalHeight,
+        undefined,
+        'FAST'
+      );
+      pdf.save(`${safeName}_Official_Certificate.pdf`);
     } catch (err: any) {
       alert('Certificate download failed: ' + err.message);
     } finally {
@@ -594,6 +719,11 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               if (!textValue) return null;
               const isSelected = selectedElementKey === field.key;
               const isDraggable = !readOnly && !field.isLocked;
+              const configuredMax = field.maxLines ?? 3;
+              const limit = configuredMax > 0 ? configuredMax : 1;
+              const words = String(textValue).split(/\s+/);
+              const shown = limit >= 10 ? textValue : words.slice(0, Math.max(limit, 1)).join(' ');
+              const truncated = shown !== textValue && limit < 10;
 
               return (
                 <div
@@ -620,12 +750,20 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                     fontStyle: field.isItalic ? 'italic' : 'normal',
                     textTransform: field.isUppercase ? 'uppercase' : 'none',
                     textAlign: (field.align || 'center') as any,
+                    letterSpacing: `${field.letterSpacing || 0}px`,
+                    transform: `translate(-50%, -50%)${field.rotation ? ` rotate(${field.rotation}deg)` : ''}`,
+                    maxWidth: `${field.maxWidth || 750}px`,
+                    lineHeight: field.lineHeight || 1.5,
+                    overflow: 'hidden',
+                    display: truncated ? '-webkit-box' : undefined,
+                    WebkitLineClamp: truncated ? limit : undefined,
+                    WebkitBoxOrient: truncated ? 'vertical' : undefined,
                     backgroundColor: 'transparent', // STRICT NO BLUE BOX
-                    whiteSpace: 'nowrap',
+                    whiteSpace: truncated ? 'normal' : (limit > 1 ? 'normal' : 'nowrap'),
                     userSelect: 'none'
                   }}
                 >
-                  {textValue}
+                  {shown}{truncated ? '...' : ''}
                 </div>
               );
             })}

@@ -7,6 +7,17 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Environment (SUPABASE credentials - DO NOT COMMIT)
+.env
+.env.local
+.env.*
+
+# Local-only planning artifacts (never commit)
+PLAN_LOCAL.md
+fix-qr.js
+fix-qr.cjs
+fix-qr.ps1
+
 node_modules
 dist
 dist-ssr

@@ -32,7 +32,7 @@ export interface QRConfig {
   y: number;
   size: number;
   visible: boolean;
-  isLocked?: boolean; // QR layer lock toggle feature
+  isLocked?: boolean;
 }
 
 export interface CertNoConfig {
@@ -42,7 +42,7 @@ export interface CertNoConfig {
   color: string;
   isBold: boolean;
   visible: boolean;
-  isLocked?: boolean; // Cert No layer lock toggle feature
+  isLocked?: boolean;
 }
 
 export interface EventItem {
@@ -57,6 +57,9 @@ export interface EventItem {
   securityAuthField: string;
   qrConfig: QRConfig;
   certNoConfig: CertNoConfig;
+  isDownloadEnabled: boolean;
+  isPublished?: boolean;
+  publishedAt?: string;
   created_at?: string;
 }
 

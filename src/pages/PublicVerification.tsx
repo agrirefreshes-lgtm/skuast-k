@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import type { IssuedCertificate } from '../types/certificate';
@@ -53,11 +53,13 @@ export const PublicVerification: React.FC = () => {
 
     const cleanTarget = targetId.trim();
 
-    // Exact Case-Insensitive Lookup (Supports exact match)
+    // Exact Case-Insensitive Lookup (Supports exact match). ilike me %/_ wildcard
+    // banne se bachne ke liye input ko escape karte hain.
+    const escaped = cleanTarget.replace(/[%_\\]/g, (ch) => `\\${ch}`);
     const { data: certData, error: certError } = await supabase
       .from('certificates')
       .select('certificate_no, event_id, event_name, issue_date, status, data')
-      .ilike('certificate_no', cleanTarget)
+      .ilike('certificate_no', escaped)
       .maybeSingle();
 
     if (!certError && certData) {
@@ -73,49 +75,70 @@ export const PublicVerification: React.FC = () => {
     setLoading(false);
   };
 
+  const executeVerificationRef = useRef(executeVerification);
+  executeVerificationRef.current = executeVerification;
+
+  const verifyFromUrl = certIdFromUrl;
+
   useEffect(() => {
-    if (certIdFromUrl) {
-      setInputCertNo(certIdFromUrl);
-      executeVerification(certIdFromUrl);
+    if (verifyFromUrl) {
+      setInputCertNo(verifyFromUrl);
+      executeVerificationRef.current(verifyFromUrl);
     }
-  }, [certIdFromUrl]);
+  }, [verifyFromUrl]);
 
   // Camera QR Scanner Lifecycle
   useEffect(() => {
-    if (scanMode === 'camera') {
-      setCameraError('');
-      const reader = new BrowserMultiFormatReader();
-      codeReaderRef.current = reader;
+    if (scanMode !== 'camera') return;
 
-      reader.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
-        if (result) {
-          const text = result.getText();
-          let scannedId = text;
-          if (text.includes('id=')) {
-            scannedId = text.split('id=')[1].split('&')[0];
-          }
+    setCameraError('');
+    const reader = new BrowserMultiFormatReader();
+    codeReaderRef.current = reader;
+    let stopped = false;
+
+    reader.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
+      if (stopped) return;
+      if (result) {
+        const text = result.getText();
+        let scannedId = text;
+        if (text.includes('id=')) {
+          scannedId = text.split('id=')[1].split('&')[0];
+        }
+        try {
           scannedId = decodeURIComponent(scannedId).trim();
-          setInputCertNo(scannedId);
-          setSearchParams({ id: scannedId });
-          setScanMode('manual');
-          executeVerification(scannedId);
+        } catch {
+          scannedId = scannedId.trim();
         }
-        if (err && !(err.name === 'NotFoundException')) {
-          console.debug(err);
-        }
-      }).catch((e) => {
+        setInputCertNo(scannedId);
+        setSearchParams({ id: scannedId });
+        setScanMode('manual');
+        executeVerificationRef.current(scannedId);
+      }
+      if (err && (err as any)?.name !== 'NotFoundException') {
+        console.debug(err);
+      }
+    }).catch((e) => {
+      if (!stopped) {
         setCameraError('Camera access denied or unavailable. Please use manual entry.');
         console.error(e);
-      });
+      }
+    });
 
-      return () => {
-        if (codeReaderRef.current) {
-          const stream = videoRef.current?.srcObject as MediaStream;
-          stream?.getTracks().forEach((track) => track.stop());
-        }
-      };
-    }
-  }, [scanMode]);
+    return () => {
+      stopped = true;
+      try {
+        const anyReader = codeReaderRef.current as any;
+        if (anyReader?.reset) anyReader.reset();
+        if (anyReader?.stopContinuousDecode) anyReader.stopContinuousDecode();
+      } catch {
+        // ignore cleanup errors
+      }
+      const stream = videoRef.current?.srcObject as MediaStream | null | undefined;
+      stream?.getTracks().forEach((track) => track.stop());
+      if (videoRef.current) videoRef.current.srcObject = null;
+      codeReaderRef.current = null;
+    };
+  }, [scanMode, setSearchParams]);
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();

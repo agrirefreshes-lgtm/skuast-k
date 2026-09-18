@@ -5,6 +5,7 @@ import { ExcelUploader } from '../components/ExcelUploader';
 import { CertificateCanvas } from '../components/CertificateCanvas';
 import { AdminLogin } from '../components/AdminLogin';
 import { supabase } from '../lib/supabaseClient';
+import { getEventUrl } from '../lib/shareUrl';
 import { 
   FolderPlus, 
   Download, 
@@ -25,7 +26,9 @@ import {
   Building,
   Mail,
   KeyRound,
-  Users
+  Users,
+  Lock,
+  Unlock
 } from 'lucide-react';
 
 interface AdminProfile {
@@ -99,8 +102,11 @@ export const AdminDashboard: React.FC = () => {
         securityAuthField: e.security_auth_field || '',
         qrConfig: e.qr_config || { x: 80, y: 74, size: 75, visible: true },
         certNoConfig: e.cert_no_config || { x: 8, y: 92, fontSize: 13, color: '#222222', isBold: false, visible: true },
-        isDownloadEnabled: e.is_download_enabled ?? true
-      } as any));
+        isDownloadEnabled: e.is_download_enabled ?? true,
+        isPublished: e.is_published ?? false,
+        publishedAt: e.published_at || undefined,
+        created_at: e.created_at
+      }));
       setEvents(formatted);
       setSelectedEventId(formatted[0].id);
     } else {
@@ -233,13 +239,22 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  const handleCreateEvent = async () => {
+    const handleCreateEvent = async () => {
     const userId = await verifyLiveSession();
     if (!userId) return;
 
     const name = prompt('Event Name (e.g. 60th ISAE Annual Convention):');
     if (!name || !name.trim()) return;
-    const cleanSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+    const { data: slugHits } = await supabase.from('events').select('slug').ilike('slug', `${baseSlug}%`);
+    let cleanSlug = baseSlug || `event-${Date.now()}`;
+    if (slugHits && slugHits.some((r: any) => r.slug === cleanSlug)) {
+      let n = 2;
+      while (slugHits.some((r: any) => r.slug === `${baseSlug}-${n}`)) n++;
+      cleanSlug = `${baseSlug}-${n}`;
+    }
+
     const prefix = prompt('Certificate Number Prefix:', `SKUASTK/${cleanSlug.substring(0, 4).toUpperCase()}/2026/`) || 'SKUASTK/CERT/2026/';
 
     const newEv: EventItem = {
@@ -254,8 +269,10 @@ export const AdminDashboard: React.FC = () => {
       securityAuthField: '',
       qrConfig: { x: 80, y: 75, size: 75, visible: true },
       certNoConfig: { x: 8, y: 92, fontSize: 13, color: '#222222', isBold: false, visible: true },
-      isDownloadEnabled: true
-    } as any;
+      isDownloadEnabled: true,
+      isPublished: false,
+      publishedAt: undefined
+    };
 
     const { error } = await supabase.from('events').insert({
       id: newEv.id,
@@ -270,6 +287,8 @@ export const AdminDashboard: React.FC = () => {
       qr_config: newEv.qrConfig,
       cert_no_config: newEv.certNoConfig,
       is_download_enabled: true,
+      is_published: false,
+      published_at: null,
       created_by: userId
     });
 
@@ -317,7 +336,89 @@ export const AdminDashboard: React.FC = () => {
       return;
     }
 
-    setEvents(events.map(ev => ev.id === eventId ? { ...ev, isDownloadEnabled: newStatus } as any : ev));
+    setEvents(events.map(ev => ev.id === eventId ? { ...ev, isDownloadEnabled: newStatus } : ev));
+  };
+
+  const handlePublishToggle = async (ev: EventItem) => {
+    const userId = await verifyLiveSession();
+    if (!userId) return;
+
+    const willPublish = !(ev.isPublished ?? false);
+    if (willPublish) {
+      if (certificates.length === 0) {
+        alert('Pahle Excel/CSV upload karke certificates generate karein, tabhi publish karein.');
+        return;
+      }
+      if (!ev.templateUrl || ev.templateUrl.includes('dummyimage')) {
+        if (!confirm('Certificate format abhi upload nahi hua. Bina format ke publish karna hai?')) return;
+      }
+      if (!ev.primaryAuthField || !ev.securityAuthField || ev.primaryAuthField === ev.securityAuthField) {
+        alert('Publish se pahle Name field aur alag Security Question field select karein.');
+        return;
+      }
+      if (!confirm(`"${ev.name}" ko PUBLICLY PUBLISH karna hai? Users ab certificates download kar payenge.`)) return;
+    } else {
+      if (!confirm(`"${ev.name}" ko UNPUBLISH karna hai? Users download nahi kar payenge.`)) return;
+    }
+
+    const updates = willPublish
+      ? {
+          is_published: true,
+          published_at: new Date().toISOString(),
+          is_download_enabled: true,
+          primary_auth_field: ev.primaryAuthField,
+          security_auth_field: ev.securityAuthField,
+        }
+      : { is_published: false, is_download_enabled: true };
+
+    const { error } = await supabase.from('events').update(updates).eq('id', ev.id);
+    if (error) {
+      alert('Publish update failed: ' + error.message);
+      return;
+    }
+
+    setEvents(events.map((row) =>
+      row.id === ev.id
+        ? {
+            ...row,
+            isPublished: willPublish,
+            publishedAt: willPublish ? (updates as any).published_at : undefined,
+            isDownloadEnabled: true,
+          }
+        : row
+    ));
+    alert(willPublish ? 'Event PUBLISHED. Share link user side live ho gayi.' : 'Event UNPUBLISHED.');
+  };
+
+  const handleToggleCanvasLock = async (ev: EventItem) => {
+    const userId = await verifyLiveSession();
+    if (!userId) return;
+
+    const anyUnlocked =
+      ev.fields.some((f) => !f.isLocked) ||
+      !ev.qrConfig.isLocked ||
+      !ev.certNoConfig.isLocked;
+    const lockAll = anyUnlocked;
+
+    const lockedFields = ev.fields.map((f) => ({ ...f, isLocked: lockAll }));
+    const lockedEvent: EventItem = {
+      ...ev,
+      fields: lockedFields,
+      qrConfig: { ...ev.qrConfig, isLocked: lockAll },
+      certNoConfig: { ...ev.certNoConfig, isLocked: lockAll },
+    };
+
+    try {
+      const { error } = await supabase.from('events').update({
+        fields: lockedEvent.fields,
+        qr_config: lockedEvent.qrConfig,
+        cert_no_config: lockedEvent.certNoConfig,
+      }).eq('id', ev.id);
+      if (error) throw error;
+      setEvents(events.map((row) => (row.id === ev.id ? lockedEvent : row)));
+    } catch (err: any) {
+      alert('Lock update failed: ' + (err?.message || 'Unknown error'));
+    }
   };
 
   const handleDeleteSingleCertificate = async (certNo: string) => {
@@ -387,6 +488,13 @@ export const AdminDashboard: React.FC = () => {
     []
   );
 
+  // Drag ke dauran me silent UI update: har pixel par Supabase session check NAHI hota.
+  // Cloud me save sirf saveEventToDb (500ms debounce) karta hai.
+  const handleUpdateEventSilent = useCallback((updated: EventItem) => {
+    setEvents((prev) => prev.map((ev) => (ev.id === updated.id ? updated : ev)));
+    saveEventToDb(updated);
+  }, [saveEventToDb]);
+
   const handleUpdateEvent = async (updated: EventItem) => {
     const userId = await verifyLiveSession();
     if (!userId) return;
@@ -428,17 +536,33 @@ export const AdminDashboard: React.FC = () => {
     const dbCertsToInsert: any[] = [];
     const localNewCerts: IssuedCertificate[] = [];
 
-    const generateRandomId = () => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let result = '';
-      for (let i = 0; i < 6; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    const { data: existingNosRows } = await supabase
+      .from('certificates')
+      .select('certificate_no')
+      .eq('event_id', currentEvent.id)
+      .limit(10000);
+
+    const occupiedNos = new Set<string>([
+      ...certificates.map((c) => c.certificate_no),
+      ...(((existingNosRows || []) as any[]).map((r) => r.certificate_no)),
+    ]);
+
+    // Generate unique 5-digit numeric certificate numbers: constant prefix + 00001..99999
+    // This ensures printable QR codes and sortable certificate numbers. DB duplicates are caught too.
+    const generateCertificateNumber = (): string => {
+      const MAX_TRIES = 50000;
+      for (let i = 1; i <= MAX_TRIES; i++) {
+        const candidate = `${currentEvent.certPrefix}${String(i).padStart(5, '0')}`;
+        if (!occupiedNos.has(candidate)) {
+          occupiedNos.add(candidate);
+          return candidate;
+        }
       }
-      return result;
+      throw new Error('Certificate number space exhausted for this event prefix.');
     };
 
     records.forEach((row) => {
-      const serialNumber = `${currentEvent.certPrefix}${generateRandomId()}`;
+      const serialNumber = generateCertificateNumber();
       const certObj: IssuedCertificate = {
         certificate_no: serialNumber,
         event_id: currentEvent.id,
@@ -471,11 +595,21 @@ export const AdminDashboard: React.FC = () => {
       primaryAuthField: pField,
       securityAuthField: sField,
       batches: [...currentEvent.batches, newBatch],
+      isDownloadEnabled: currentEvent.isDownloadEnabled ?? true,
+      isPublished: currentEvent.isPublished ?? false,
     };
 
-    const { error: certError } = await supabase.from('certificates').insert(dbCertsToInsert);
+    const { data: inserted, error: certError } = await supabase
+      .from('certificates')
+      .insert(dbCertsToInsert)
+      .select('certificate_no');
+
     if (certError) {
-      alert('Certificates upload error: ' + certError.message);
+      if ((certError as any)?.code === '23505') {
+        alert('Duplicate certificate numbers mile. Dobara try karein (unique 5-digit numbers auto-regenerate honge).');
+      } else {
+        alert('Certificates upload error: ' + certError.message);
+      }
       return;
     }
 
@@ -489,7 +623,10 @@ export const AdminDashboard: React.FC = () => {
     setEvents(events.map((ev) => (ev.id === currentEvent.id ? updatedEvent : ev)));
     setCertificates([...certificates, ...localNewCerts]);
     setActiveCertIndex(0);
-    alert(`${records.length} Certificates Supabase Cloud me successfully save ho gaye!`);
+    setSelectedEventId(currentEvent.id);
+    alert(
+      `${records.length} Certificates Supabase Cloud me successfully save ho gaye!\nNo: ${inserted?.[0]?.certificate_no ?? ''} ...`
+    );
   };
 
   const handleDeleteBatch = async (batchId: string) => {
@@ -525,7 +662,7 @@ export const AdminDashboard: React.FC = () => {
   const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];
   const activeCert = certificates[activeCertIndex] || certificates[0];
   const isSuperAdmin = userProfile?.role === 'super_admin';
-  const isCurrentEventDownloadsActive = (currentEvent as any)?.isDownloadEnabled !== false;
+  const isCurrentEventDownloadsActive = currentEvent?.isDownloadEnabled !== false;
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-6 font-sans">
@@ -767,7 +904,7 @@ export const AdminDashboard: React.FC = () => {
                       }`}
                       title="Click to toggle public student download access"
                     >
-                      {isCurrentEventDownloadsActive ? '✓ Finalized (Live to Students)' : '⏸ Draft Preview (Publish)'}
+                      {isCurrentEventDownloadsActive ? '✓ Downloads Live' : '⏸ Downloads Paused'}
                     </button>
                   )}
                 </div>
@@ -777,14 +914,22 @@ export const AdminDashboard: React.FC = () => {
                   <div>
                     <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
                       <LinkIcon size={14} /> Public Download Link (Universal)
+                      {currentEvent.isPublished ? (
+                        <span className="ml-2 bg-emerald-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">LIVE</span>
+                      ) : (
+                        <span className="ml-2 bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">DRAFT</span>
+                      )}
                     </span>
                     <span className="text-xs font-mono font-semibold text-slate-800 mt-1 block select-all">
-                      {window.location.href.split('#')[0].replace(/\/+$/, '')}/#/event/{currentEvent.slug || currentEvent.id}
+                      {getEventUrl(currentEvent.slug || currentEvent.id)}
+                    </span>
+                    <span className="text-[11px] text-slate-500 mt-1 block">
+                      Event create hote hi auto-generated. Publish ke baad users isi link se Name + Security Q dekar certificate download kar sakte hain.
                     </span>
                   </div>
                   <button
                     onClick={() => {
-                      const link = `${window.location.href.split('#')[0].replace(/\/+$/, '')}/#/event/${currentEvent.slug || currentEvent.id}`;
+                      const link = getEventUrl(currentEvent.slug || currentEvent.id);
                       navigator.clipboard.writeText(link);
                       setCopied(true);
                       setTimeout(() => setCopied(false), 2000);
@@ -797,6 +942,44 @@ export const AdminDashboard: React.FC = () => {
                   </button>
                 </div>
 
+                {/* Publish Controls (Draft -> Live -> Update push) */}
+                <div className={`p-5 rounded-2xl border shadow-sm space-y-3 ${currentEvent.isPublished ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-gray-200'}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck size={18} className={currentEvent.isPublished ? 'text-emerald-700' : 'text-slate-500'} />
+                      <div>
+                        <h3 className="text-xs font-bold text-gray-800">
+                          {currentEvent.isPublished ? 'Event LIVE hai (Published)' : 'Event DRAFT me hai'}
+                        </h3>
+                        <p className="text-[11px] text-gray-500">
+                          Teams layout lock karein (Lock Axis), phir Name + Security Q fix karein, phir niche Live button dabayein. Baad me changes ho to Unpublish, edit, dobara Publish (update push) karein. Certificate numbers har record ke liye fixed rahenge, layout auto-update ho jayega kyunki render live hota hai.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => handleToggleCanvasLock(currentEvent)}
+                        className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer border shadow-sm bg-white text-slate-800 border-gray-300 hover:bg-slate-100 transition"
+                        title="Sabhi text layers + QR + cert no ka lock/unlock ek sath."
+                      >
+                        {currentEvent.fields.some((f) => !f.isLocked) || !currentEvent.qrConfig.isLocked || !currentEvent.certNoConfig.isLocked ? <Lock size={14} /> : <Unlock size={14} />}
+                        {currentEvent.fields.some((f) => !f.isLocked) || !currentEvent.qrConfig.isLocked || !currentEvent.certNoConfig.isLocked ? 'Lock Axis (All)' : 'Unlock Axis (All)'}
+                      </button>
+                      <button
+                        onClick={() => handlePublishToggle(currentEvent)}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold text-white shadow transition cursor-pointer flex items-center gap-1.5 ${currentEvent.isPublished ? 'bg-slate-800 hover:bg-slate-700' : 'bg-emerald-700 hover:bg-emerald-600'}`}
+                      >
+                        {currentEvent.isPublished ? 'Unpublish (Edit ke liye)' : 'Publish (Live for Users)'}
+                      </button>
+                    </div>
+                  </div>
+                  {currentEvent.isPublished && currentEvent.publishedAt && (
+                    <p className="text-[11px] text-emerald-800 font-semibold">
+                      Last published: {new Date(currentEvent.publishedAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+
                 {/* 2-Factor Auth Field Mapping */}
                 <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm space-y-3">
                   <div className="flex items-center gap-2">
@@ -805,24 +988,33 @@ export const AdminDashboard: React.FC = () => {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
                     <div>
-                      <label className="block text-[11px] font-bold text-gray-700 mb-1">Primary Identifier (Name)</label>
+                      <label className="block text-[11px] font-bold text-gray-700 mb-1">Primary Identifier (Name) *</label>
                       <select
                         value={currentEvent.primaryAuthField}
                         onChange={(e) => handleUpdateEvent({ ...currentEvent, primaryAuthField: e.target.value })}
                         className="w-full text-xs p-2 rounded-lg border bg-slate-50"
                       >
+                        <option value="">-- Select Name Column --</option>
                         {currentEvent.fields.map((f) => (
                           <option key={f.key} value={f.label}>{f.label}</option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[11px] font-bold text-gray-700 mb-1">Security Check (Reg No / Mobile)</label>
+                      <label className="block text-[11px] font-bold text-gray-700 mb-1">Security Check (Reg No / Mobile) * (Name se alag hona chahiye)</label>
                       <select
                         value={currentEvent.securityAuthField}
-                        onChange={(e) => handleUpdateEvent({ ...currentEvent, securityAuthField: e.target.value })}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v && v === currentEvent.primaryAuthField) {
+                            alert('Security question Name field se alag column hona chahiye.');
+                            return;
+                          }
+                          handleUpdateEvent({ ...currentEvent, securityAuthField: v });
+                        }}
                         className="w-full text-xs p-2 rounded-lg border bg-slate-50"
                       >
+                        <option value="">-- Select Security Column --</option>
                         {currentEvent.fields.map((f) => (
                           <option key={f.key} value={f.label}>{f.label}</option>
                         ))}
@@ -971,7 +1163,7 @@ export const AdminDashboard: React.FC = () => {
                     <CertificateCanvas
                       event={currentEvent}
                       cert={activeCert}
-                      onUpdateEvent={handleUpdateEvent}
+                      onUpdateEvent={handleUpdateEventSilent}
                     />
                   </div>
                 )}
