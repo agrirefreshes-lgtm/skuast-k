@@ -143,46 +143,74 @@ export const AdminDashboard: React.FC = () => {
 
   // Load profile + events from a verified session
   const loadProfile = async (session: any) => {
-    const { data: profile } = await supabase
-      .from('admin_profiles')
-      .select('id, email, role, department')
-      .eq('id', session.user.id)
-      .maybeSingle();
+    console.log('loadProfile called, session.user.id:', session.user?.id);
+    try {
+      const { data: profile } = await supabase
+        .from('admin_profiles')
+        .select('id, email, role, department')
+        .eq('id', session.user.id)
+        .maybeSingle();
 
-    const userEmail = session.user.email?.toLowerCase() || '';
-    const isSuper = profile?.role === 'super_admin' || userEmail.includes('superadmin');
+      if (!profile) {
+        console.warn('loadProfile: no admin_profiles row found, using defaults. user:', session.user?.email);
+      }
 
-    const resolvedProfile = {
-      id: session.user.id,
-      email: session.user.email || 'Admin',
-      role: isSuper ? 'super_admin' : (profile?.role || 'event_admin'),
-      department: isSuper ? 'Central Administration' : (profile?.department || 'Academic Department')
-    };
+      const userEmail = session.user.email?.toLowerCase() || '';
+      const isSuper = profile?.role === 'super_admin' || userEmail.includes('superadmin');
 
-    setUserProfile(resolvedProfile);
+      const resolvedProfile: AdminProfile = {
+        id: session.user.id,
+        email: session.user.email || 'Admin',
+        role: isSuper ? 'super_admin' : (profile?.role || 'event_admin'),
+        department: isSuper ? 'Central Administration' : (profile?.department || 'Academic Department')
+      };
 
-    if (resolvedProfile.role === 'super_admin') {
-      await loadAdminDirectory();
-    } else {
-      await loadEvents();
+      console.log('loadProfile: resolved profile, role:', resolvedProfile.role);
+      setUserProfile(resolvedProfile);
+
+      if (resolvedProfile.role === 'super_admin') {
+        await loadAdminDirectory();
+      } else {
+        await loadEvents();
+      }
+      console.log('loadProfile: data loaded successfully');
+    } catch (err: any) {
+      console.error('loadProfile ERROR:', err);
+      alert('Failed to load admin profile. Please try again.\nError: ' + (err?.message || String(err)));
+    } finally {
+      // Always clear loading so the console can render (never leave the UI stuck).
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // On mount: check for existing session (page refresh / back navigation)
   useEffect(() => {
     const checkExistingSession = async () => {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
 
-      if (session?.user) {
+        if (!session?.user) {
+          console.log('checkExistingSession: no active session found');
+          sessionStorage.removeItem('skuastk_admin_auth');
+          setIsAuthenticated(false);
+          setLoading(false);
+          return;
+        }
+
+        console.log('checkExistingSession: session found for user:', session.user.email);
+        await loadProfile(session);
+        
+        // Only set isAuthenticated after successful profile load
         setIsAuthenticated(true);
         sessionStorage.setItem('skuastk_admin_auth', 'true');
-        await loadProfile(session);
-      } else {
+        console.log('checkExistingSession: auth complete, dashboard ready');
+      } catch (err: any) {
+        console.error('checkExistingSession ERROR:', err);
         sessionStorage.removeItem('skuastk_admin_auth');
         setIsAuthenticated(false);
         setLoading(false);
+        alert('Session check failed. Please login again.\nError: ' + (err?.message || String(err)));
       }
     };
 
@@ -221,14 +249,18 @@ export const AdminDashboard: React.FC = () => {
         sessionToUse = fetchedSession;
       }
 
+      console.log('handleLoginSuccess: session found, loading profile...');
+      
+      // Load profile FIRST, then set isAuthenticated
+      await loadProfile(sessionToUse);
+      
+      // Only set isAuthenticated after successful profile load
       setIsAuthenticated(true);
-      sessionStorage.setItem('skuastk_admin_auth', 'true');
-      await loadProfile(sessionToUse);
-      await loadProfile(sessionToUse);
-    } catch (err) {
+      console.log('handleLoginSuccess: auth complete, dashboard ready for user:', sessionToUse.user?.email);
+    } catch (err: any) {
       setLoading(false);
-      console.error('Login success error:', err);
-      alert('Authentication error. Please try again.');
+      console.error('LOGIN ERROR:', err);
+      alert('LOGIN FAILED: ' + (err?.message || String(err)) + '\nPlease try again.');
     }
   };
 
@@ -240,6 +272,17 @@ export const AdminDashboard: React.FC = () => {
     );
   }
 
+  // Auth ok but profile still resolving -> show a spinner instead of a blank screen
+  if (!userProfile) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center gap-3 p-4 font-sans">
+        <Loader2 className="animate-spin text-emerald-800" size={28} />
+        <p className="text-xs font-semibold text-slate-600">Admin console load ho raha hai...</p>
+      </div>
+    );
+  }
+
+  // Authenticated + profile loaded -> render dashboard
   const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormMsg(null);
@@ -875,7 +918,7 @@ export const AdminDashboard: React.FC = () => {
               <div className="bg-white p-12 rounded-2xl border text-center text-sm font-medium text-gray-500 flex justify-center items-center gap-2">
                 <Loader2 className="animate-spin text-emerald-800" size={20} /> Loading events from Supabase Cloud...
               </div>
-            ) : events.length === 0 ? (
+            ) : (events.length === 0 || !currentEvent) ? (
               <div className="bg-white p-12 rounded-2xl border text-center space-y-3">
                 <p className="text-gray-600 text-sm">Abhi tak aapke department ka koi event nahi bana hai.</p>
                 <button onClick={handleCreateEvent} className="bg-emerald-800 text-white text-xs font-bold px-4 py-2 rounded-xl cursor-pointer">

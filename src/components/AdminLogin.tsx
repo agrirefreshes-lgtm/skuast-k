@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { Lock, Mail, ShieldAlert, Building2, Loader2 } from 'lucide-react';
 
 interface Props {
-  onAuthenticated: () => void;
+  onAuthenticated: (session: any) => void;
 }
 
 export const AdminLogin: React.FC<Props> = ({ onAuthenticated }) => {
@@ -32,7 +32,7 @@ export const AdminLogin: React.FC<Props> = ({ onAuthenticated }) => {
       if (data?.session) {
         // Safe backend token stored via Supabase Auth client automatically
         sessionStorage.setItem('skuastk_admin_auth', 'true');
-        onAuthenticated();
+        onAuthenticated(data.session);
       }
     } catch (err: any) {
       setErrorMsg(
