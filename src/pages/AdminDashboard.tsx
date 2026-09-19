@@ -264,6 +264,32 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const saveEventToDb = useCallback(
+    (() => {
+      let timeoutId: any;
+      return (updated: EventItem) => {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(async () => {
+          await supabase.from('events').update({
+            fields: updated.fields,
+            primary_auth_field: updated.primaryAuthField,
+            security_auth_field: updated.securityAuthField,
+            qr_config: updated.qrConfig,
+            cert_no_config: updated.certNoConfig,
+          }).eq('id', updated.id);
+        }, 500);
+      };
+    })(),
+    []
+  );
+
+  // Drag ke dauran me silent UI update: har pixel par Supabase session check NAHI hota.
+  // Cloud me save sirf saveEventToDb (500ms debounce) karta hai.
+  const handleUpdateEventSilent = useCallback((updated: EventItem) => {
+    setEvents((prev) => prev.map((ev) => (ev.id === updated.id ? updated : ev)));
+    saveEventToDb(updated);
+  }, [saveEventToDb]);
+
   if (!isAuthenticated) {
     return (
       <AdminLogin
@@ -538,32 +564,6 @@ export const AdminDashboard: React.FC = () => {
     setEvents(events.map((ev) => (ev.id === currentEvent.id ? updated : ev)));
     setUploadingImage(false);
   };
-
-  const saveEventToDb = useCallback(
-    (() => {
-      let timeoutId: any;
-      return (updated: EventItem) => {
-        clearTimeout(timeoutId);
-        timeoutId = setTimeout(async () => {
-          await supabase.from('events').update({
-            fields: updated.fields,
-            primary_auth_field: updated.primaryAuthField,
-            security_auth_field: updated.securityAuthField,
-            qr_config: updated.qrConfig,
-            cert_no_config: updated.certNoConfig,
-          }).eq('id', updated.id);
-        }, 500);
-      };
-    })(),
-    []
-  );
-
-  // Drag ke dauran me silent UI update: har pixel par Supabase session check NAHI hota.
-  // Cloud me save sirf saveEventToDb (500ms debounce) karta hai.
-  const handleUpdateEventSilent = useCallback((updated: EventItem) => {
-    setEvents((prev) => prev.map((ev) => (ev.id === updated.id ? updated : ev)));
-    saveEventToDb(updated);
-  }, [saveEventToDb]);
 
   const handleUpdateEvent = async (updated: EventItem) => {
     const userId = await verifyLiveSession();
