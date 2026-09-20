@@ -647,11 +647,21 @@ export const AdminDashboard: React.FC = () => {
       ...(((existingNosRows || []) as any[]).map((r) => r.certificate_no)),
     ]);
 
-    // Generate unique 5-digit numeric certificate numbers: constant prefix + 00001..99999
-    // This ensures printable QR codes and sortable certificate numbers. DB duplicates are caught too.
+    // Random 5-digit numeric suffix: constant prefix + har student ka alag random no.
+    // Har candidate ka random suffix unique hota hai (local + DB occupancy check),
+    // QR me wahi full cert-no jata hai isliye QR ↔ data matching guaranteed.
     const generateCertificateNumber = (): string => {
-      const MAX_TRIES = 50000;
-      for (let i = 1; i <= MAX_TRIES; i++) {
+      const MAX_TRIES = 20000;
+      for (let i = 0; i < MAX_TRIES; i++) {
+        const rand = Math.floor(10000 + Math.random() * 90000);
+        const candidate = `${currentEvent.certPrefix}${String(rand)}`;
+        if (!occupiedNos.has(candidate)) {
+          occupiedNos.add(candidate);
+          return candidate;
+        }
+      }
+      // Bahut rare collision-storm me sequential fallback (kabhi duplicate nahi).
+      for (let i = 1; i <= 99999; i++) {
         const candidate = `${currentEvent.certPrefix}${String(i).padStart(5, '0')}`;
         if (!occupiedNos.has(candidate)) {
           occupiedNos.add(candidate);

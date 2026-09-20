@@ -31,9 +31,40 @@ const SENSITIVE_FIELD_KEYS = [
   'pin'
 ];
 
+// HashRouter me ?id= hash ke ANDAR hota hai (#/verify?id=...),
+// isliye useSearchParams akela kaam nahi karta — hash fallback zaroori hai.
+const getVerifyIdFromLocation = (): string => {
+  const fromSearch = new URLSearchParams(window.location.search).get('id');
+  if (fromSearch) return fromSearch;
+  const hash = window.location.hash || '';
+  const qIndex = hash.indexOf('?');
+  if (qIndex >= 0) {
+    return new URLSearchParams(hash.slice(qIndex + 1)).get('id') || '';
+  }
+  return '';
+};
+
+// QR scan / copy-paste se aaye text me se saaf cert-no nikalta hai:
+// poora QR URL, id=... fragment, %20 encoding, extra spaces — sab handle.
+const extractCertId = (raw: string): string => {
+  let s = (raw || '').trim();
+  if (!s) return '';
+  if (s.includes('id=')) {
+    s = s.split('id=')[1].split('&')[0].split('#')[0];
+  }
+  try {
+    s = decodeURIComponent(s);
+  } catch {
+    /* raw rakho */
+  }
+  return s.trim().replace(/\s+/g, ' ');
+};
+
 export const PublicVerification: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const certIdFromUrl = searchParams.get('id') || '';
+  const routerId = searchParams.get('id') || '';
+  const [hashId, setHashId] = useState<string>(() => getVerifyIdFromLocation());
+  const certIdFromUrl = routerId || hashId;
 
   const [inputCertNo, setInputCertNo] = useState(certIdFromUrl);
   const [scanMode, setScanMode] = useState<'manual' | 'camera'>('manual');
@@ -41,28 +72,47 @@ export const PublicVerification: React.FC = () => {
   const [cert, setCert] = useState<IssuedCertificate | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [cameraError, setCameraError] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
 
   const executeVerification = async (targetId: string) => {
-    if (!targetId.trim()) return;
+    const cleanTarget = extractCertId(targetId);
+    if (!cleanTarget) return;
+    setInputCertNo(cleanTarget);
     setLoading(true);
     setHasSearched(true);
     setCert(null);
+    setErrorMsg('');
 
-    const cleanTarget = targetId.trim();
-
-    // Exact Case-Insensitive Lookup (Supports exact match). ilike me %/_ wildcard
-    // banne se bachne ke liye input ko escape karte hain.
+    // 1) Exact match (case-sensitive) — sabse tez + deterministic.
+    // 2) Nahi mila to case-insensitive exact (ilike, wildcard-escaped).
+    // Dono me select + maybeSingle, taaki 0/2+ rows par crash na ho.
     const escaped = cleanTarget.replace(/[%_\\]/g, (ch) => `\\${ch}`);
-    const { data: certData, error: certError } = await supabase
+    let certData: any = null;
+
+    const exactRes = await supabase
       .from('certificates')
       .select('certificate_no, event_id, event_name, issue_date, status, data')
-      .ilike('certificate_no', escaped)
+      .eq('certificate_no', cleanTarget)
       .maybeSingle();
+    if (!exactRes.error && exactRes.data) {
+      certData = exactRes.data;
+    } else {
+      const ciRes = await supabase
+        .from('certificates')
+        .select('certificate_no, event_id, event_name, issue_date, status, data')
+        .ilike('certificate_no', escaped)
+        .maybeSingle();
+      if (!ciRes.error && ciRes.data) {
+        certData = ciRes.data;
+      } else if (ciRes.error) {
+        setErrorMsg('Verification lookup fail ho gaya. Please dobara try karein.');
+      }
+    }
 
-    if (!certError && certData) {
+    if (certData) {
       setCert({
         certificate_no: certData.certificate_no,
         event_id: certData.event_id,
@@ -82,10 +132,19 @@ export const PublicVerification: React.FC = () => {
 
   useEffect(() => {
     if (verifyFromUrl) {
-      setInputCertNo(verifyFromUrl);
-      executeVerificationRef.current(verifyFromUrl);
+      const clean = extractCertId(verifyFromUrl);
+      setInputCertNo(clean);
+      executeVerificationRef.current(clean);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [verifyFromUrl]);
+
+  // Hash change (QR link khulne / back-nav) par bhi id pakdo.
+  useEffect(() => {
+    const onHashChange = () => setHashId(getVerifyIdFromLocation());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   // Camera QR Scanner Lifecycle
   useEffect(() => {
@@ -99,20 +158,15 @@ export const PublicVerification: React.FC = () => {
     reader.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
       if (stopped) return;
       if (result) {
-        const text = result.getText();
-        let scannedId = text;
-        if (text.includes('id=')) {
-          scannedId = text.split('id=')[1].split('&')[0];
+        const scannedId = extractCertId(result.getText());
+        if (scannedId) {
+          stopped = true;
+          setInputCertNo(scannedId);
+          setSearchParams({ id: scannedId });
+          setHashId(scannedId);
+          setScanMode('manual');
+          executeVerificationRef.current(scannedId);
         }
-        try {
-          scannedId = decodeURIComponent(scannedId).trim();
-        } catch {
-          scannedId = scannedId.trim();
-        }
-        setInputCertNo(scannedId);
-        setSearchParams({ id: scannedId });
-        setScanMode('manual');
-        executeVerificationRef.current(scannedId);
       }
       if (err && (err as any)?.name !== 'NotFoundException') {
         console.debug(err);
@@ -287,6 +341,9 @@ export const PublicVerification: React.FC = () => {
             <p className="text-xs text-gray-500 max-w-xs mx-auto">
               No official record found for certificate "{inputCertNo}". Please verify and re-scan.
             </p>
+            {errorMsg && (
+              <p className="text-[11px] text-rose-500 font-mono mt-1">DB: {errorMsg}</p>
+            )}
           </div>
         ) : null}
 
