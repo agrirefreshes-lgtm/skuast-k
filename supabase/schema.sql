@@ -67,6 +67,15 @@ alter table public.admin_profiles enable row level security;
 alter table public.events enable row level security;
 alter table public.certificates enable row level security;
 
+-- 4a. TABLE GRANTS (RLS policies ke SAATH ye bhi chahiye — warna 42501
+-- "permission denied for table" aata hai; events par tha isliye wahi chal raha tha)
+grant select on public.admin_profiles to anon;
+grant select, insert, update on public.admin_profiles to authenticated;
+grant select on public.events to anon;
+grant all on public.events to authenticated;
+grant select on public.certificates to anon;
+grant all on public.certificates to authenticated;
+
 drop policy if exists "public read admin_profiles" on public.admin_profiles;
 create policy "public read admin_profiles"
   on public.admin_profiles for select using (true);
@@ -119,6 +128,23 @@ drop policy if exists "open delete templates" on storage.objects;
 create policy "open delete templates"
   on storage.objects for delete
   using (bucket_id = 'templates');
+
+-- =====================================================================
+-- FIX-42501 (sirf ye block chalao — poori schema dobara chalane ki zaroorat nahi)
+-- Supabase Dashboard → SQL Editor → New Query → ye block paste → Run
+-- Wajah: certificates table par anon role ko GRANT SELECT nahi tha,
+-- isliye RLS policy hone ke bawajood "permission denied (42501)" aa raha tha.
+-- =====================================================================
+grant select on public.certificates to anon;
+grant all on public.certificates to authenticated;
+grant select on public.events to anon;
+grant all on public.events to authenticated;
+grant select on public.admin_profiles to anon;
+grant select, insert, update on public.admin_profiles to authenticated;
+
+-- Verify (sab me rows ya [] aana chahiye, 42501 NAHI):
+-- select * from public.certificates limit 1;
+-- =====================================================================
 
 -- 6. RPC: SuperAdmin → Department Admin create
 -- SECURITY DEFINER taaki anon-key se naya auth user + profile ban sake.
