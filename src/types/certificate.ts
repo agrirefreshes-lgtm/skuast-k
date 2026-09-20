@@ -40,6 +40,7 @@ export interface CertNoConfig {
   y: number;
   fontSize: number;
   color: string;
+  fontFamily?: string;
   isBold: boolean;
   visible: boolean;
   isLocked?: boolean;

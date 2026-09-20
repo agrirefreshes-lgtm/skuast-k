@@ -1,30 +1,14 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import type { EventItem, IssuedCertificate, DynamicFieldDef } from '../types/certificate';
 import { QRCodeSVG } from 'qrcode.react';
 import { getVerifyUrl } from '../lib/shareUrl';
-import { 
-  Bold, 
-  Italic, 
-  AlignLeft, 
-  AlignCenter, 
-  AlignRight, 
-  Palette, 
-  Type, 
-  X, 
-  ArrowUp, 
-  ArrowDown, 
-  ArrowLeft, 
-  ArrowRight,
-  Lock,
-  Unlock,
-  AlignCenterHorizontal,
-  AlignCenterVertical,
-  ZoomIn,
-  ZoomOut,
-  Download,
-  Loader2
+import {
+  Bold, Italic, AlignLeft, AlignCenter, AlignRight, Palette, Type,
+  X, Lock, Unlock, ZoomIn, ZoomOut, Download, Loader2, Eye, EyeOff
 } from 'lucide-react';
+
 interface Props {
   event: EventItem;
   cert: IssuedCertificate;
@@ -44,813 +28,445 @@ const CERT_FONTS = [
 
 export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent, readOnly = false }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
-
   const [selectedElementKey, setSelectedElementKey] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [isExporting, setIsExporting] = useState<boolean>(false);
-
-  // Smooth Live Mouse Dragging State
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
 
-  const getQrVerificationUrl = useCallback(() => {
-    return getVerifyUrl(cert.certificate_no);
-  }, [cert.certificate_no]);
+  const getQrVerificationUrl = () => getVerifyUrl(cert.certificate_no);
+  const selectedField = selectedElementKey ? (event.fields.find(f => f.key === selectedElementKey) || null) : null;
 
-  // Mouse Drag Logic (Smooth and Pixel-Accurate, No native drag-ghost issues)
+  // ---------------- DRAG ----------------
   const handleMouseDown = (key: string, e: React.MouseEvent) => {
     if (readOnly) return;
     e.preventDefault();
     e.stopPropagation();
-
-    // Check lock
     if (key === '__cert_no__' && event.certNoConfig.isLocked) return;
     if (key === '__qr_code__' && event.qrConfig.isLocked) return;
     const field = event.fields.find(f => f.key === key);
     if (field && field.isLocked) return;
-
     setSelectedElementKey(key);
     setDraggingKey(key);
   };
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!draggingKey || !containerRef.current || !onUpdateEvent) return;
-
     const rect = containerRef.current.getBoundingClientRect();
     const x = Math.max(0, Math.min(100, Number((((e.clientX - rect.left) / rect.width) * 100).toFixed(2))));
     const y = Math.max(0, Math.min(100, Number((((e.clientY - rect.top) / rect.height) * 100).toFixed(2))));
-
     if (draggingKey === '__cert_no__') {
-      onUpdateEvent({
-        ...event,
-        certNoConfig: { ...event.certNoConfig, x, y }
-      });
+      onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x, y } });
     } else if (draggingKey === '__qr_code__') {
-      onUpdateEvent({
-        ...event,
-        qrConfig: { ...event.qrConfig, x, y }
-      });
+      onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, x, y } });
     } else {
-      const updatedFields = event.fields.map(f =>
-        f.key === draggingKey ? { ...f, x, y } : f
-      );
+      const updatedFields = event.fields.map(f => f.key === draggingKey ? { ...f, x, y } : f);
       onUpdateEvent({ ...event, fields: updatedFields });
     }
   }, [draggingKey, event, onUpdateEvent]);
 
-  const handleMouseUp = useCallback(() => {
-    setDraggingKey(null);
-  }, []);
+  const handleMouseUp = useCallback(() => { setDraggingKey(null); }, []);
 
   useEffect(() => {
-    if (draggingKey) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    }
+    if (!draggingKey) return;
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [draggingKey, handleMouseMove, handleMouseUp]);
 
-  const selectedField = event.fields.find(f => f.key === selectedElementKey);
-
-  const splitExportLines = (
-    drawCtx: CanvasRenderingContext2D,
-    text: string,
-    maxWidthPx: number,
-    letterSpacing: number
-  ): string[] => {
-    const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
-    if (!clean) return [''];
-    if (!maxWidthPx || maxWidthPx <= 0) return [clean];
-
-    const measure = (value: string): number => {
-      let width = drawCtx.measureText(value).width;
-      if (letterSpacing && value.length > 0) {
-        width += letterSpacing * (value.length - 1);
-      }
-      return width;
-    };
-
-    const words = clean.split(' ');
-    const lines: string[] = [];
-    let current = '';
-    for (const word of words) {
-      const candidate = current ? `${current} ${word}` : word;
-      if (measure(candidate) <= maxWidthPx) {
-        current = candidate;
-      } else {
-        if (current) lines.push(current);
-        if (drawCtx.measureText(word).width > maxWidthPx && word.length > 1) {
-          let chunk = '';
-          for (const ch of word) {
-            const next = chunk + ch;
-            if (measure(next) <= maxWidthPx) {
-              chunk = next;
-            } else {
-              if (chunk) lines.push(chunk);
-              chunk = ch;
-            }
-          }
-          current = chunk;
-        } else {
-          current = word;
-        }
-      }
-    }
-    if (current) lines.push(current);
-    return lines.length > 0 ? lines : [clean];
-  };
-
-  const updateSelectedField = (updates: Partial<DynamicFieldDef>) => {
-    if (!onUpdateEvent || !selectedElementKey) return;
-    const updatedFields = event.fields.map(f =>
-      f.key === selectedElementKey ? { ...f, ...updates } : f
-    );
+  // ---------------- FIELD UPDATE HELPERS ----------------
+  const updateField = (key: string, patch: Partial<DynamicFieldDef>) => {
+    if (!onUpdateEvent) return;
+    const updatedFields = event.fields.map(f => f.key === key ? { ...f, ...patch } : f);
     onUpdateEvent({ ...event, fields: updatedFields });
   };
 
-  // 100% Crisp High-Res Export (Matching Coordinates Exactly)
-  const handleDownloadHighRes = async () => {
-    if (!imgRef.current) return;
+  const handleFontFamilyChange = (key: string, fontFamily: string) => {
+    if (key === '__cert_no__') { onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, fontFamily } }); return; }
+    updateField(key, { fontFamily });
+  };
+
+  const handleFontSizeChange = (key: string, fontSize: number) => {
+    if (key === '__cert_no__') { onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, fontSize } }); return; }
+    updateField(key, { fontSize });
+  };
+
+  const handleColorChange = (key: string, color: string) => {
+    if (key === '__cert_no__') { onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, color } }); return; }
+    updateField(key, { color });
+  };
+
+  const handleToggleBold = (key: string) => {
+    if (key === '__cert_no__') { onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, isBold: !event.certNoConfig.isBold } }); return; }
+    const f = event.fields.find(x => x.key === key);
+    if (f) updateField(key, { isBold: !f.isBold });
+  };
+
+  const handleToggleItalic = (key: string) => {
+    const f = event.fields.find(x => x.key === key);
+    if (f) updateField(key, { isItalic: !f.isItalic });
+  };
+
+  const handleToggleUppercase = (key: string) => {
+    const f = event.fields.find(x => x.key === key);
+    if (f) updateField(key, { isUppercase: !f.isUppercase });
+  };
+
+  const handleAlignChange = (key: string, align: 'left' | 'center' | 'right') => updateField(key, { align });
+  const handleMaxWidthChange = (key: string, maxWidth: number) => updateField(key, { maxWidth });
+  const handleLineHeightChange = (key: string, lineHeight: number) => updateField(key, { lineHeight });
+  const handleMaxLinesChange = (key: string, maxLines: number) => updateField(key, { maxLines });
+  const handleLetterSpacingChange = (key: string, letterSpacing: number) => updateField(key, { letterSpacing });
+  const handleRotationChange = (key: string, rotation: number) => updateField(key, { rotation });
+
+  const handleVisibilityToggle = (key: string) => {
+    if (key === '__cert_no__') { onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, visible: !event.certNoConfig.visible } }); return; }
+    if (key === '__qr_code__') { onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, visible: !event.qrConfig.visible } }); return; }
+    const f = event.fields.find(x => x.key === key);
+    if (f) updateField(key, { visible: !f.visible });
+  };
+
+  const handleLockToggle = (key: string) => {
+    if (key === '__cert_no__') { onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, isLocked: !event.certNoConfig.isLocked } }); return; }
+    if (key === '__qr_code__') { onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, isLocked: !event.qrConfig.isLocked } }); return; }
+    const f = event.fields.find(x => x.key === key);
+    if (f) updateField(key, { isLocked: !f.isLocked });
+  };
+
+  const handleLockAxisAll = () => {
+    if (!onUpdateEvent) return;
+    onUpdateEvent({
+      ...event,
+      fields: event.fields.map(f => ({ ...f, isLocked: true })),
+      qrConfig: { ...event.qrConfig, isLocked: true },
+      certNoConfig: { ...event.certNoConfig, isLocked: true },
+    });
+  };
+
+  const handleUnlockAxisAll = () => {
+    if (!onUpdateEvent) return;
+    onUpdateEvent({
+      ...event,
+      fields: event.fields.map(f => ({ ...f, isLocked: false })),
+      qrConfig: { ...event.qrConfig, isLocked: false },
+      certNoConfig: { ...event.certNoConfig, isLocked: false },
+    });
+  };
+
+  const handleZoomIn = () => setZoomLevel((z) => Math.min(3, z + 0.25));
+  const handleZoomOut = () => setZoomLevel((z) => Math.max(0.25, z - 0.25));
+
+  const getProcessedText = (text: string, field: DynamicFieldDef): string => {
+    let result = text ?? '';
+    if (field.isUppercase) result = result.toUpperCase();
+    return result;
+  };
+
+  // ---------------- EXPORT (PNG + PDF) ----------------
+  const handleExportCanvas = async (format: 'pdf' | 'png') => {
+    if (!containerRef.current || isExporting) return;
     setIsExporting(true);
-
     try {
-      const naturalWidth = imgRef.current.naturalWidth || 1920;
-      const naturalHeight = imgRef.current.naturalHeight || 1080;
-
-      const offscreen = document.createElement('canvas');
-      offscreen.width = naturalWidth;
-      offscreen.height = naturalHeight;
-      const ctx = offscreen.getContext('2d');
-
-      if (!ctx) throw new Error('Failed to create canvas context');
-
-      // 1. Draw Template
-      ctx.drawImage(imgRef.current, 0, 0, naturalWidth, naturalHeight);
-
-      // Baseline scale
-      const scale = naturalWidth / 1000;
-
-      // 2. Draw Dynamic Text Fields
-      event.fields.filter(f => f.visible).forEach((field) => {
-        const textValue = cert.data[field.label] || cert.data[field.key] || '';
-        if (!textValue) return;
-
-        const fontSizePx = (field.fontSize || 18) * scale;
-        const fontStyle = field.isItalic ? 'italic' : 'normal';
-        const fontWeight = field.isBold ? 'bold' : 'normal';
-        const fontFamily = field.fontFamily || 'Georgia, serif';
-        const letterSpacing = field.letterSpacing || 0;
-        const rotation = field.rotation || 0;
-
-        const fontString = `${fontStyle} ${fontWeight} ${fontSizePx}px ${fontFamily}`;
-        const maxWidthPx = (field.maxWidth || 750) * scale;
-        const maxLines = field.maxLines;
-
-        ctx.font = fontString;
-        ctx.fillStyle = field.color || '#111827';
-        ctx.textAlign = (field.align as CanvasTextAlign) || 'center';
-        ctx.textBaseline = 'middle';
-
-        const posX = (field.x / 100) * naturalWidth;
-        const posY = (field.y / 100) * naturalHeight;
-        const textOutput = field.isUppercase ? String(textValue).toUpperCase() : String(textValue);
-
-        const lines = splitExportLines(ctx, textOutput, maxWidthPx, letterSpacing * scale);
-        const configuredMax = maxLines ?? 3;
-        const limit = configuredMax > 0 ? configuredMax : 1;
-        const limited =
-          lines.length > limit
-            ? [...lines.slice(0, limit - 1), `${lines[limit - 1]}...`]
-            : lines;
-
-        ctx.save();
-        ctx.translate(posX, posY);
-        if (rotation) {
-          ctx.rotate((rotation * Math.PI) / 180);
-        }
-
-        const lineHeightPx = (field.lineHeight || 24) * scale;
-        const startY = -(limited.length - 1) * (lineHeightPx / 2);
-
-        limited.forEach((line, index) => {
-          let drawX = 0;
-          if (field.align === 'left') {
-            drawX = 0;
-            ctx.textAlign = 'left';
-          } else if (field.align === 'right') {
-            drawX = 0;
-            ctx.textAlign = 'right';
-          } else {
-            drawX = 0;
-            ctx.textAlign = 'center';
-          }
-
-          const lineY = startY + index * lineHeightPx;
-          if (letterSpacing && line.length > 1) {
-            const prevAlign = ctx.textAlign;
-            ctx.textAlign = 'left';
-            const measured =
-              ctx.measureText(line).width + letterSpacing * scale * (line.length - 1);
-            let startX = 0;
-            if (prevAlign === 'center') startX = -measured / 2;
-            if (prevAlign === 'right') startX = -measured;
-            let cursorX = startX;
-            line.split('').forEach((ch) => {
-              ctx.fillText(ch, cursorX, lineY);
-              cursorX += ctx.measureText(ch).width + letterSpacing * scale;
-            });
-            ctx.textAlign = prevAlign;
-          } else {
-            ctx.fillText(line, drawX, lineY);
-          }
+      const canvas = await html2canvas(containerRef.current, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: '#ffffff',
+      });
+      const dataUrl = canvas.toDataURL('image/png');
+      if (format === 'pdf') {
+        const pdf = new jsPDF({
+          orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+          unit: 'px',
+          format: [canvas.width, canvas.height],
         });
-
-        ctx.restore();
-      });
-
-      // 3. Draw Certificate Number
-      if (event.certNoConfig.visible) {
-        const cConfig = event.certNoConfig;
-        const cFontSize = (cConfig.fontSize || 14) * scale;
-        ctx.font = `${cConfig.isBold ? 'bold' : 'normal'} ${cFontSize}px monospace`;
-        ctx.fillStyle = cConfig.color || '#111827';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-
-        const cX = (cConfig.x / 100) * naturalWidth;
-        const cY = (cConfig.y / 100) * naturalHeight;
-        ctx.fillText(cert.certificate_no, cX, cY);
+        pdf.addImage(dataUrl, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save(`${event.slug || event.name}-certificate-${cert.certificate_no}.pdf`);
+      } else {
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = `${event.slug || event.name}-certificate-${cert.certificate_no}.png`;
+        link.click();
       }
-
-      // 4. Draw QR Code from SVG
-      if (event.qrConfig.visible) {
-        const svgElement = document.getElementById('cert-qr-code-svg');
-        if (svgElement) {
-          const svgData = new XMLSerializer().serializeToString(svgElement);
-          const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-          const URL = window.URL || window.webkitURL || window;
-          const blobURL = URL.createObjectURL(svgBlob);
-
-          await new Promise<void>((resolve) => {
-            const qrImg = new Image();
-            qrImg.onload = () => {
-              const qrSize = (event.qrConfig.size || 80) * scale;
-              const qrX = (event.qrConfig.x / 100) * naturalWidth - qrSize / 2;
-              const qrY = (event.qrConfig.y / 100) * naturalHeight - qrSize / 2;
-              ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
-              URL.revokeObjectURL(blobURL);
-              resolve();
-            };
-            qrImg.src = blobURL;
-          });
-        }
-      }
-
-      // 5. Export: PNG + print-ready PDF (Ultra-HD, full template resolution)
-      const safeName = cert.certificate_no.replace(/[^a-zA-Z0-9_-]/g, '_');
-
-      const pngLink = document.createElement('a');
-      pngLink.download = `${safeName}_Official_Certificate.png`;
-      pngLink.href = offscreen.toDataURL('image/png', 1.0);
-      pngLink.click();
-
-      const pdf = new jsPDF({
-        orientation: naturalWidth >= naturalHeight ? 'landscape' : 'portrait',
-        unit: 'px',
-        format: [naturalWidth, naturalHeight],
-        hotfixes: ['px_scaling'],
-      });
-      pdf.addImage(
-        offscreen.toDataURL('image/jpeg', 1.0),
-        'JPEG',
-        0,
-        0,
-        naturalWidth,
-        naturalHeight,
-        undefined,
-        'FAST'
-      );
-      pdf.save(`${safeName}_Official_Certificate.pdf`);
-    } catch (err: any) {
-      alert('Certificate download failed: ' + err.message);
+    } catch (err) {
+      console.error('Export error:', err);
+      alert('Certificate export fail ho gaya. Please try again.');
     } finally {
       setIsExporting(false);
     }
   };
 
   return (
-    <div className="flex flex-col border border-slate-700/80 rounded-2xl bg-slate-950 shadow-2xl overflow-hidden select-none">
-      
-      {/* 1. TOP TOOLBAR WITH BIG, CLEAR BUTTONS */}
-      {!readOnly && (
-        <div className="sticky top-0 z-30 bg-[#0d131f] border-b border-slate-800 shadow-lg">
-          
-          {/* Layer Selector Bar + Zoom Controls */}
-          <div className="px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
-            
-            <div className="flex items-center gap-2 overflow-x-auto py-1 max-w-full">
-              <span className="text-xs font-black tracking-wider text-amber-400 shrink-0 mr-1">
-                LAYERS:
-              </span>
-
-              {event.fields.filter(f => f.visible).map((f) => (
-                <div key={f.key} className="inline-flex items-center rounded-xl overflow-hidden border border-slate-700 shadow shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedElementKey(f.key)}
-                    className={`px-3 py-1.5 text-xs font-bold transition cursor-pointer ${
-                      selectedElementKey === f.key
-                        ? 'bg-amber-400 text-slate-950'
-                        : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
-                    }`}
-                  >
-                    {f.label}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const updatedFields = event.fields.map(field =>
-                        field.key === f.key ? { ...field, isLocked: !field.isLocked } : field
-                      );
-                      onUpdateEvent?.({ ...event, fields: updatedFields });
-                    }}
-                    title={f.isLocked ? "Layer Locked" : "Click to Lock"}
-                    className={`px-2 py-1.5 text-xs cursor-pointer border-l border-slate-700 ${
-                      f.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {f.isLocked ? <Lock size={12} /> : <Unlock size={12} />}
-                  </button>
-                </div>
-              ))}
-
-              {event.certNoConfig.visible && (
-                <div className="inline-flex items-center rounded-xl overflow-hidden border border-slate-700 shadow shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedElementKey('__cert_no__')}
-                    className={`px-3 py-1.5 text-xs font-bold transition cursor-pointer ${
-                      selectedElementKey === '__cert_no__'
-                        ? 'bg-amber-400 text-slate-950'
-                        : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
-                    }`}
-                  >
-                    Cert No
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onUpdateEvent?.({
-                      ...event,
-                      certNoConfig: { ...event.certNoConfig, isLocked: !event.certNoConfig.isLocked }
-                    })}
-                    className={`px-2 py-1.5 text-xs cursor-pointer border-l border-slate-700 ${
-                      event.certNoConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400'
-                    }`}
-                  >
-                    {event.certNoConfig.isLocked ? <Lock size={12} /> : <Unlock size={12} />}
-                  </button>
-                </div>
-              )}
-
-              {event.qrConfig.visible && (
-                <div className="inline-flex items-center rounded-xl overflow-hidden border border-slate-700 shadow shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedElementKey('__qr_code__')}
-                    className={`px-3 py-1.5 text-xs font-bold transition cursor-pointer ${
-                      selectedElementKey === '__qr_code__'
-                        ? 'bg-amber-400 text-slate-950'
-                        : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
-                    }`}
-                  >
-                    QR Code
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onUpdateEvent?.({
-                      ...event,
-                      qrConfig: { ...event.qrConfig, isLocked: !event.qrConfig.isLocked }
-                    })}
-                    className={`px-2 py-1.5 text-xs cursor-pointer border-l border-slate-700 ${
-                      event.qrConfig.isLocked ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400'
-                    }`}
-                  >
-                    {event.qrConfig.isLocked ? <Lock size={12} /> : <Unlock size={12} />}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Zoom Controls & 300DPI Sample Export */}
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="flex items-center bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700">
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel(prev => Math.max(0.6, Number((prev - 0.1).toFixed(2))))}
-                  className="p-1 text-slate-300 hover:text-white"
-                  title="Zoom Out"
-                >
-                  <ZoomOut size={16} />
-                </button>
-                <span className="px-2 font-mono font-bold text-amber-400 text-xs">
-                  {Math.round(zoomLevel * 100)}%
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel(prev => Math.min(1.5, Number((prev + 0.1).toFixed(2))))}
-                  className="p-1 text-slate-300 hover:text-white"
-                  title="Zoom In"
-                >
-                  <ZoomIn size={16} />
-                </button>
-              </div>
-
-              <button
-                type="button"
-                disabled={isExporting}
-                onClick={handleDownloadHighRes}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-2 shadow cursor-pointer disabled:opacity-50"
-              >
-                {isExporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                <span>Sample High-Res</span>
-              </button>
-            </div>
-
-          </div>
-
-          {/* Ribbon Controls For Selected Field */}
-          {(selectedField || selectedElementKey === '__cert_no__' || selectedElementKey === '__qr_code__') && (
-            <div className="px-4 py-3 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-              <div className="flex flex-wrap items-center gap-2.5">
-                
-                {/* Font Selector (Only for Text Fields) */}
-                {selectedField && (
-                  <div className="flex items-center bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700">
-                    <Type size={15} className="text-emerald-400 mr-1.5" />
-                    <select
-                      value={selectedField.fontFamily || 'Georgia, serif'}
-                      onChange={(e) => updateSelectedField({ fontFamily: e.target.value })}
-                      className="bg-transparent text-white text-xs font-semibold focus:outline-none cursor-pointer"
-                    >
-                      {CERT_FONTS.map(f => (
-                        <option key={f.value} value={f.value} className="bg-slate-900 text-white">
-                          {f.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {/* Size Steppers (For Text, Cert No, and QR Code) */}
-                <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedField) updateSelectedField({ fontSize: Math.max(9, (selectedField.fontSize || 18) - 1) });
-                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, fontSize: Math.max(9, (event.certNoConfig.fontSize || 14) - 1) } });
-                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, size: Math.max(20, (event.qrConfig.size || 80) - 2) } });
-                    }}
-                    className="px-3 py-1.5 hover:bg-slate-800 text-white font-bold text-sm"
-                  >
-                    -
-                  </button>
-                  <span className="px-2 text-amber-400 font-mono font-black text-xs min-w-[3rem] text-center">
-                    {selectedField ? `${selectedField.fontSize || 18}px` : selectedElementKey === '__cert_no__' ? `${event.certNoConfig.fontSize || 14}px` : `${event.qrConfig.size || 80}px`}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedField) updateSelectedField({ fontSize: (selectedField.fontSize || 18) + 1 });
-                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, fontSize: (event.certNoConfig.fontSize || 14) + 1 } });
-                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, size: (event.qrConfig.size || 80) + 2 } });
-                    }}
-                    className="px-3 py-1.5 hover:bg-slate-800 text-white font-bold text-sm"
-                  >
-                    +
-                  </button>
-                </div>
-
-                {/* Center Helpers (For all) */}
-                <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 p-1 gap-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedField) updateSelectedField({ x: 50 });
-                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x: 50 } });
-                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, x: 50 } });
-                    }}
-                    className="px-2.5 py-1 hover:bg-slate-800 rounded-lg text-slate-200 hover:text-amber-400 font-bold text-[11px] flex items-center gap-1"
-                  >
-                    <AlignCenterHorizontal size={14} /> Center X
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedField) updateSelectedField({ y: 50 });
-                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, y: 50 } });
-                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, y: 50 } });
-                    }}
-                    className="px-2.5 py-1 hover:bg-slate-800 rounded-lg text-slate-200 hover:text-amber-400 font-bold text-[11px] flex items-center gap-1"
-                  >
-                    <AlignCenterVertical size={14} /> Center Y
-                  </button>
-                </div>
-
-                {/* Bold & Italic (Only Text and Cert No) */}
-                {(selectedField || selectedElementKey === '__cert_no__') && (
-                  <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 p-1 gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (selectedField) updateSelectedField({ isBold: !selectedField.isBold });
-                        else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, isBold: !event.certNoConfig.isBold } });
-                      }}
-                      className={`px-3 py-1 rounded-lg font-black ${
-                        (selectedField && selectedField.isBold) || (selectedElementKey === '__cert_no__' && event.certNoConfig.isBold)
-                          ? 'bg-amber-400 text-slate-950'
-                          : 'text-slate-300'
-                      }`}
-                    >
-                      <Bold size={14} />
-                    </button>
-                    {selectedField && (
-                      <button
-                        type="button"
-                        onClick={() => updateSelectedField({ isItalic: !selectedField.isItalic })}
-                        className={`px-3 py-1 rounded-lg ${selectedField.isItalic ? 'bg-amber-400 text-slate-950' : 'text-slate-300'}`}
-                      >
-                        <Italic size={14} />
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Align (Only Text Fields) */}
-                {selectedField && (
-                  <div className="flex items-center bg-slate-900 rounded-xl border border-slate-700 p-1 gap-1">
-                    <button
-                      type="button"
-                      onClick={() => updateSelectedField({ align: 'left' })}
-                      className={`p-1.5 rounded-lg ${selectedField.align === 'left' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
-                    >
-                      <AlignLeft size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateSelectedField({ align: 'center' })}
-                      className={`p-1.5 rounded-lg ${selectedField.align === 'center' || !selectedField.align ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
-                    >
-                      <AlignCenter size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateSelectedField({ align: 'right' })}
-                      className={`p-1.5 rounded-lg ${selectedField.align === 'right' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
-                    >
-                      <AlignRight size={14} />
-                    </button>
-                  </div>
-                )}
-
-                {/* Color (Text and Cert No) */}
-                {(selectedField || selectedElementKey === '__cert_no__') && (
-                  <label className="flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700 cursor-pointer">
-                    <Palette size={15} className="text-amber-400" />
-                    <input
-                      type="color"
-                      value={selectedField ? (selectedField.color || '#111827') : (event.certNoConfig.color || '#111827')}
-                      onChange={(e) => {
-                        if (selectedField) updateSelectedField({ color: e.target.value });
-                        else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, color: e.target.value } });
-                      }}
-                      className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0"
-                    />
-                  </label>
-                )}
-
-                {/* Nudge D-Pad (For all) */}
-                <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-xl border border-slate-700">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedField) updateSelectedField({ x: Math.max(0, Number((selectedField.x - 0.2).toFixed(2))) });
-                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x: Math.max(0, Number((event.certNoConfig.x - 0.2).toFixed(2))) } });
-                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, x: Math.max(0, Number((event.qrConfig.x - 0.2).toFixed(2))) } });
-                    }}
-                    className="p-1 text-slate-300 hover:text-white"
-                  >
-                    <ArrowLeft size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedField) updateSelectedField({ y: Math.max(0, Number((selectedField.y - 0.2).toFixed(2))) });
-                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, y: Math.max(0, Number((event.certNoConfig.y - 0.2).toFixed(2))) } });
-                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, y: Math.max(0, Number((event.qrConfig.y - 0.2).toFixed(2))) } });
-                    }}
-                    className="p-1 text-slate-300 hover:text-white"
-                  >
-                    <ArrowUp size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedField) updateSelectedField({ y: Math.min(100, Number((selectedField.y + 0.2).toFixed(2))) });
-                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, y: Math.min(100, Number((event.certNoConfig.y + 0.2).toFixed(2))) } });
-                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, y: Math.min(100, Number((event.qrConfig.y + 0.2).toFixed(2))) } });
-                    }}
-                    className="p-1 text-slate-300 hover:text-white"
-                  >
-                    <ArrowDown size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedField) updateSelectedField({ x: Math.min(100, Number((selectedField.x + 0.2).toFixed(2))) });
-                      else if (selectedElementKey === '__cert_no__' && onUpdateEvent) onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x: Math.min(100, Number((event.certNoConfig.x + 0.2).toFixed(2))) } });
-                      else if (selectedElementKey === '__qr_code__' && onUpdateEvent) onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, x: Math.min(100, Number((event.qrConfig.x + 0.2).toFixed(2))) } });
-                    }}
-                    className="p-1 text-slate-300 hover:text-white"
-                  >
-                    <ArrowRight size={14} />
-                  </button>
-                </div>
-
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setSelectedElementKey(null)}
-                className="text-slate-400 hover:text-white p-1.5 rounded-lg bg-slate-800"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          )}
-
-        </div>
-      )}
-
-      {/* 2. THE WORKSPACE - 100% ZERO BLUE BOXES, TRUE TRANSPARENT BACKGROUND */}
-      <div className="w-full p-6 md:p-10 bg-[#070b12] flex items-center justify-center overflow-auto min-h-[580px]">
-        <div 
-          className="transition-transform duration-100 ease-out origin-center flex items-center justify-center shadow-2xl p-1"
-          style={{ transform: `scale(${zoomLevel})` }}
-        >
-          <div
-            ref={containerRef}
-            className="relative w-[950px] aspect-[1.414/1] bg-white shadow-2xl rounded-sm overflow-hidden select-none border border-slate-700 shrink-0"
-          >
-            {/* Template Image Base */}
-            <img 
-              ref={imgRef}
-              src={event.templateUrl}
-              alt="Template"
-              crossOrigin="anonymous"
-              className="w-full h-full object-fill pointer-events-none block"
-            />
-
-            {/* Dynamic Text Fields */}
-            {event.fields.filter(f => f.visible).map((field) => {
-              const textValue = cert.data[field.label] || cert.data[field.key] || '';
-              if (!textValue) return null;
-              const isSelected = selectedElementKey === field.key;
-              const isDraggable = !readOnly && !field.isLocked;
-              const configuredMax = field.maxLines ?? 3;
-              const limit = configuredMax > 0 ? configuredMax : 1;
-              const words = String(textValue).split(/\s+/);
-              const shown = limit >= 10 ? textValue : words.slice(0, Math.max(limit, 1)).join(' ');
-              const truncated = shown !== textValue && limit < 10;
-
-              return (
-                <div
-                  key={field.key}
-                  onMouseDown={(e) => isDraggable && handleMouseDown(field.key, e)}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!readOnly) setSelectedElementKey(field.key);
-                  }}
-                  className={`absolute transform -translate-x-1/2 -translate-y-1/2 leading-normal transition-shadow ${
-                    !readOnly
-                      ? `${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${
-                          isSelected ? 'ring-2 ring-amber-400 ring-offset-2 rounded px-1.5' : 'hover:ring-1 hover:ring-amber-300/60'
-                        }`
-                      : ''
-                  }`}
-                  style={{
-                    left: `${field.x}%`,
-                    top: `${field.y}%`,
-                    fontSize: `${field.fontSize || 18}px`,
-                    color: field.color || '#111827',
-                    fontFamily: field.fontFamily || 'Georgia, serif',
-                    fontWeight: field.isBold ? 'bold' : 'normal',
-                    fontStyle: field.isItalic ? 'italic' : 'normal',
-                    textTransform: field.isUppercase ? 'uppercase' : 'none',
-                    textAlign: (field.align || 'center') as any,
-                    letterSpacing: `${field.letterSpacing || 0}px`,
-                    transform: `translate(-50%, -50%)${field.rotation ? ` rotate(${field.rotation}deg)` : ''}`,
-                    maxWidth: `${field.maxWidth || 750}px`,
-                    lineHeight: field.lineHeight || 1.5,
-                    overflow: 'hidden',
-                    display: truncated ? '-webkit-box' : undefined,
-                    WebkitLineClamp: truncated ? limit : undefined,
-                    WebkitBoxOrient: truncated ? 'vertical' : undefined,
-                    backgroundColor: 'transparent', // STRICT NO BLUE BOX
-                    whiteSpace: truncated ? 'normal' : (limit > 1 ? 'normal' : 'nowrap'),
-                    userSelect: 'none'
-                  }}
-                >
-                  {shown}{truncated ? '...' : ''}
-                </div>
-              );
-            })}
-
-            {/* Certificate Number */}
-            {event.certNoConfig.visible && (
-              <div
-                onMouseDown={(e) => !event.certNoConfig.isLocked && handleMouseDown('__cert_no__', e)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!readOnly) setSelectedElementKey('__cert_no__');
-                }}
-                className={`absolute transform -translate-y-1/2 ${
-                  !readOnly
-                    ? `${!event.certNoConfig.isLocked ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${
-                        selectedElementKey === '__cert_no__' ? 'ring-2 ring-amber-400 rounded px-1' : ''
-                      }`
-                    : ''
-                }`}
-                style={{
-                  left: `${event.certNoConfig.x}%`,
-                  top: `${event.certNoConfig.y}%`,
-                  fontSize: `${event.certNoConfig.fontSize || 14}px`,
-                  color: event.certNoConfig.color || '#111827',
-                  fontWeight: event.certNoConfig.isBold ? 'bold' : 'normal',
-                  fontFamily: 'monospace',
-                  whiteSpace: 'nowrap',
-                  backgroundColor: 'transparent'
-                }}
-              >
-                {cert.certificate_no}
-              </div>
-            )}
-
-            {/* QR Code */}
-            {event.qrConfig.visible && (
-              <div
-                onMouseDown={(e) => !event.qrConfig.isLocked && handleMouseDown('__qr_code__', e)}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!readOnly) setSelectedElementKey('__qr_code__');
-                }}
-                className={`absolute transform -translate-x-1/2 -translate-y-1/2 ${
-                  !readOnly
-                    ? `${!event.qrConfig.isLocked ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${
-                        selectedElementKey === '__qr_code__' ? 'ring-2 ring-amber-400' : ''
-                      }`
-                    : ''
-                }`}
-                style={{
-                  left: `${event.qrConfig.x}%`,
-                  top: `${event.qrConfig.y}%`,
-                  backgroundColor: 'white',
-                  padding: '3px',
-                  lineHeight: 0
-                }}
-              >
-                <QRCodeSVG
-                  id="cert-qr-code-svg"
-                  value={getQrVerificationUrl()}
-                  size={event.qrConfig.size || 80}
-                  level="M"
-                  includeMargin={false}
-                />
-              </div>
-            )}
-
-          </div>
-        </div>
+    <div className="relative w-full select-none">
+      {/* Zoom + Lock Controls */}
+      <div className="absolute top-3 right-3 z-20 flex items-center gap-1 bg-white/90 backdrop-blur-sm rounded-xl shadow border border-gray-200 p-1">
+        <button onClick={handleZoomOut} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"><ZoomOut size={15} /></button>
+        <span className="text-[11px] font-mono font-bold text-slate-700 w-10 text-center">{Math.round(zoomLevel * 100)}%</span>
+        <button onClick={handleZoomIn} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"><ZoomIn size={15} /></button>
       </div>
-
-      {/* 3. BIG DOWNLOAD BUTTON FOR USER/STUDENT PORTAL */}
-      {readOnly && (
-        <div className="p-5 bg-[#0d131f] border-t border-slate-800 flex justify-center items-center">
-          <button
-            type="button"
-            disabled={isExporting}
-            onClick={handleDownloadHighRes}
-            style={{ backgroundColor: '#0f5132' }}
-            className="text-white px-8 py-3.5 rounded-xl font-bold text-sm flex items-center gap-2.5 shadow-xl hover:bg-emerald-800 transition cursor-pointer disabled:opacity-50"
-          >
-            {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-            <span>{isExporting ? 'Generating Certificate...' : 'Download Official Certificate (300 DPI)'}</span>
+      {!readOnly && (
+        <div className="absolute top-3 left-3 z-20 flex items-center gap-2 bg-white/90 backdrop-blur-sm rounded-xl shadow border border-gray-200 px-3 py-1.5">
+          <button onClick={handleLockAxisAll} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200 cursor-pointer">
+            <Lock size={12} /> Lock All
+          </button>
+          <button onClick={handleUnlockAxisAll} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 cursor-pointer">
+            <Unlock size={12} /> Unlock All
           </button>
         </div>
       )}
 
+      {/* Inspector Ribbon */}
+      {!readOnly && selectedElementKey && (
+        <div className="absolute top-14 left-3 z-20 bg-white/95 backdrop-blur-sm rounded-xl shadow-xl border border-gray-200 p-3 space-y-2.5 w-72 max-h-[70vh] overflow-y-auto">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              Inspector — {selectedElementKey === '__cert_no__' ? 'Certificate No' : selectedElementKey === '__qr_code__' ? 'QR Code' : (selectedField?.label || selectedElementKey)}
+            </span>
+            <button onClick={() => setSelectedElementKey(null)} className="text-slate-400 hover:text-slate-700 cursor-pointer"><X size={14} /></button>
+          </div>
+
+          {selectedElementKey !== '__qr_code__' && (
+            <div className="flex items-center gap-2">
+              <Type size={13} className="text-slate-400 shrink-0" />
+              <select
+                value={selectedElementKey === '__cert_no__' ? (event.certNoConfig.fontFamily || 'Georgia, serif') : (selectedField?.fontFamily ?? 'Georgia, serif')}
+                onChange={(e) => handleFontFamilyChange(selectedElementKey!, e.target.value)}
+                className="flex-1 text-[11px] rounded-lg border border-gray-200 bg-white px-2 py-1.5 cursor-pointer"
+              >
+                {CERT_FONTS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+              </select>
+            </div>
+          )}
+
+          {selectedElementKey !== '__qr_code__' && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-400 w-10 shrink-0">Size</span>
+              <input
+                type="number" min={6} max={120}
+                value={selectedElementKey === '__cert_no__' ? event.certNoConfig.fontSize : (selectedField?.fontSize ?? 14)}
+                onChange={(e) => handleFontSizeChange(selectedElementKey!, Number(e.target.value))}
+                className="w-16 text-[11px] rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-right cursor-pointer"
+              />
+            </div>
+          )}
+
+          {selectedElementKey !== '__qr_code__' && (
+            <div className="flex items-center gap-2">
+              <Palette size={13} className="text-slate-400 shrink-0" />
+              <input
+                type="color"
+                value={selectedElementKey === '__cert_no__' ? event.certNoConfig.color : (selectedField?.color ?? '#111827')}
+                onChange={(e) => handleColorChange(selectedElementKey!, e.target.value)}
+                className="w-8 h-7 rounded border border-gray-200 cursor-pointer bg-white p-0.5"
+              />
+              <span className="text-[11px] font-mono text-slate-600">{selectedElementKey === '__cert_no__' ? event.certNoConfig.color : (selectedField?.color ?? '#111827')}</span>
+            </div>
+          )}
+
+          {selectedElementKey !== '__qr_code__' && (
+            <div className="flex items-center gap-1 flex-wrap">
+              <button onClick={() => handleToggleBold(selectedElementKey!)} className={`p-1.5 rounded-lg ${selectedElementKey === '__cert_no__' ? (event.certNoConfig.isBold ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100') : (selectedField?.isBold ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100')} cursor-pointer`}>
+                <Bold size={15} />
+              </button>
+              <button onClick={() => handleToggleItalic(selectedElementKey!)} disabled={selectedElementKey === '__cert_no__'} className={`p-1.5 rounded-lg disabled:opacity-30 ${selectedField?.isItalic ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100'} cursor-pointer`}>
+                <Italic size={15} />
+              </button>
+              <button onClick={() => handleToggleUppercase(selectedElementKey!)} disabled={selectedElementKey === '__cert_no__'} className={`p-1.5 rounded-lg disabled:opacity-30 ${selectedField?.isUppercase ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100'} cursor-pointer`}>
+                <span className="text-[11px] font-bold">AA</span>
+              </button>
+              <div className="w-px h-5 bg-gray-200 mx-1" />
+              {(['left', 'center', 'right'] as const).map(a => (
+                <button key={a} onClick={() => handleAlignChange(selectedElementKey!, a)} disabled={selectedElementKey === '__cert_no__'} className={`p-1.5 rounded-lg disabled:opacity-30 ${selectedField?.align === a ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100'} cursor-pointer`} title={a}>
+                  {a === 'left' ? <AlignLeft size={15} /> : a === 'center' ? <AlignCenter size={15} /> : <AlignRight size={15} />}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {selectedField && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 w-10 shrink-0">Width</span>
+                <input type="range" min={0} max={100} value={selectedField.maxWidth} onChange={(e) => handleMaxWidthChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
+                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{selectedField.maxWidth}%</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 w-10 shrink-0">LHeight</span>
+                <input type="range" min={0.8} max={3} step={0.1} value={selectedField.lineHeight} onChange={(e) => handleLineHeightChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
+                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{selectedField.lineHeight.toFixed(1)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 w-10 shrink-0">MaxLines</span>
+                <input type="number" min={1} max={10} value={selectedField.maxLines ?? 1} onChange={(e) => handleMaxLinesChange(selectedElementKey!, Number(e.target.value))} className="w-14 text-[11px] rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-center cursor-pointer" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 w-10 shrink-0">Spacing</span>
+                <input type="range" min={-5} max={10} step={0.5} value={selectedField.letterSpacing ?? 0} onChange={(e) => handleLetterSpacingChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
+                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{(selectedField.letterSpacing ?? 0).toFixed(1)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 w-10 shrink-0">Rotate</span>
+                <input type="range" min={-90} max={90} value={selectedField.rotation ?? 0} onChange={(e) => handleRotationChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
+                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{(selectedField.rotation ?? 0).toFixed(0)}°</span>
+              </div>
+            </div>
+          )}
+
+          {/* Lock + Visibility */}
+          <div className="border-t border-gray-100 pt-1.5 flex items-center gap-1">
+            <button
+              onClick={() => handleLockToggle(selectedElementKey!)}
+              className={`p-1.5 rounded-lg ${(selectedElementKey === '__cert_no__' ? event.certNoConfig.isLocked : selectedElementKey === '__qr_code__' ? event.qrConfig.isLocked : selectedField?.isLocked) ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100'} cursor-pointer`}
+              title="Lock / Unlock"
+            >
+              {(selectedElementKey === '__cert_no__' ? event.certNoConfig.isLocked : selectedElementKey === '__qr_code__' ? event.qrConfig.isLocked : selectedField?.isLocked) ? <Lock size={14} /> : <Unlock size={14} />}
+            </button>
+            <button
+              onClick={() => handleVisibilityToggle(selectedElementKey!)}
+              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 cursor-pointer"
+              title="Show / Hide"
+            >
+              {(selectedElementKey === '__cert_no__' ? event.certNoConfig.visible : selectedElementKey === '__qr_code__' ? event.qrConfig.visible : (selectedField?.visible ?? true)) ? <Eye size={14} /> : <EyeOff size={14} />}
+            </button>
+            <span className="text-[10px] ml-auto text-slate-400">Drag = move</span>
+          </div>
+        </div>
+      )}
+      {/* Certificate Surface */}
+      <div className="w-full overflow-auto rounded-2xl border border-gray-200 bg-slate-100 p-3">
+        <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center' }} className="mx-auto w-fit transition-transform">
+          <div
+            ref={containerRef}
+            onClick={() => { if (!readOnly) setSelectedElementKey(null); }}
+            className="relative bg-white shadow-lg overflow-hidden"
+            style={{ width: '1123px', maxWidth: '100%', aspectRatio: '1.414 / 1' }}
+          >
+            {event.templateUrl ? (
+              <img src={event.templateUrl} alt="Certificate template" className="absolute inset-0 w-full h-full object-fill" draggable={false} crossOrigin="anonymous" />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-50">
+                <p className="text-xs text-slate-400">Template upload karein — blank preview</p>
+              </div>
+            )}
+            {event.fields.filter(f => f.visible).map(field => {
+              const raw = cert.data[field.key] ?? '';
+              if (!raw) return null;
+              const text = getProcessedText(raw, field);
+              const isSel = selectedElementKey === field.key;
+              return (
+                <div
+                  key={field.key}
+                  onMouseDown={(e) => handleMouseDown(field.key, e)}
+                  className={`absolute ${readOnly ? '' : 'cursor-move'} ${isSel && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''}`}
+                  style={{
+                    left: `${field.x}%`, top: `${field.y}%`, width: `${field.maxWidth}%`,
+                    transform: `translate(-50%, -50%) rotate(${field.rotation ?? 0}deg)`,
+                    textAlign: field.align, color: field.color, fontFamily: field.fontFamily,
+                    fontSize: `${field.fontSize}px`, fontWeight: field.isBold ? 700 : 400,
+                    fontStyle: field.isItalic ? 'italic' : 'normal',
+                    lineHeight: field.lineHeight, letterSpacing: `${field.letterSpacing ?? 0}px`,
+                    wordBreak: 'break-word', overflow: 'hidden',
+                    display: '-webkit-box', WebkitLineClamp: field.maxLines ?? 1,
+                    WebkitBoxOrient: 'vertical' as const, userSelect: 'none',
+                  }}
+                  title={readOnly ? field.label : `${field.label} — drag karein`}
+                >
+                  {text}
+                </div>
+              );
+            })}
+            {event.certNoConfig.visible && (
+              <div
+                onMouseDown={(e) => handleMouseDown('__cert_no__', e)}
+                className={`absolute ${readOnly ? '' : 'cursor-move'} ${selectedElementKey === '__cert_no__' && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''}`}
+                style={{
+                  left: `${event.certNoConfig.x}%`, top: `${event.certNoConfig.y}%`,
+                  transform: 'translate(-50%, -50%)', color: event.certNoConfig.color,
+                  fontFamily: event.certNoConfig.fontFamily || 'Georgia, serif',
+                  fontSize: `${event.certNoConfig.fontSize}px`,
+                  fontWeight: event.certNoConfig.isBold ? 700 : 400, userSelect: 'none',
+                }}
+                title={readOnly ? 'Certificate No' : 'Certificate No — drag karein'}
+              >
+                {cert.certificate_no}
+              </div>
+            )}
+            {event.qrConfig.visible && (
+              <div
+                onMouseDown={(e) => handleMouseDown('__qr_code__', e)}
+                className={`absolute ${readOnly ? '' : 'cursor-move'} ${selectedElementKey === '__qr_code__' && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''}`}
+                style={{
+                  left: `${event.qrConfig.x}%`, top: `${event.qrConfig.y}%`,
+                  transform: 'translate(-50%, -50%)',
+                  width: `${event.qrConfig.size}px`, height: `${event.qrConfig.size}px`,
+                  background: '#fff', padding: '4px', userSelect: 'none',
+                }}
+                title={readOnly ? 'QR Code' : 'QR Code — drag karein'}
+              >
+                <QRCodeSVG value={getQrVerificationUrl()} size={event.qrConfig.size - 8} level="M" />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {/* Layer List */}
+      {!readOnly && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {event.fields.map(f => (
+            <button
+              key={f.key}
+              onClick={() => setSelectedElementKey(f.key)}
+              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${selectedElementKey === f.key ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-white text-slate-600 border-gray-200 hover:border-emerald-300'}`}
+            >
+              {f.label}{f.isLocked ? ' 🔒' : ''}{!f.visible ? ' 👁‍🗨' : ''}
+            </button>
+          ))}
+          <button
+            onClick={() => setSelectedElementKey('__cert_no__')}
+            className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${selectedElementKey === '__cert_no__' ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-white text-slate-600 border-gray-200 hover:border-emerald-300'}`}
+          >
+            Cert-No{event.certNoConfig.isLocked ? ' 🔒' : ''}
+          </button>
+          <button
+            onClick={() => setSelectedElementKey('__qr_code__')}
+            className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${selectedElementKey === '__qr_code__' ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-white text-slate-600 border-gray-200 hover:border-emerald-300'}`}
+          >
+            QR{event.qrConfig.isLocked ? ' 🔒' : ''}
+          </button>
+        </div>
+      )}
+      {/* QR Size + Export */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {!readOnly && (
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-1.5">
+            <span className="text-[10px] font-bold text-slate-500">QR Size</span>
+            <input
+              type="range" min={40} max={220} value={event.qrConfig.size}
+              onChange={(e) => onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, size: Number(e.target.value) } })}
+              className="w-24 cursor-pointer"
+            />
+            <span className="text-[10px] font-mono text-slate-600">{event.qrConfig.size}px</span>
+          </div>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => handleExportCanvas('png')}
+            disabled={isExporting}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold shadow transition cursor-pointer disabled:opacity-50"
+          >
+            {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} PNG
+          </button>
+          <button
+            onClick={() => handleExportCanvas('pdf')}
+            disabled={isExporting}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold shadow transition cursor-pointer disabled:opacity-50"
+          >
+            {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Official PDF
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
