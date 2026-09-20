@@ -586,9 +586,13 @@ export const AdminDashboard: React.FC = () => {
     };
 
     let updatedFields: DynamicFieldDef[] = [...currentEvent.fields];
+    // Stable key: header normalize (trim + multi-space collapse + lower + _)
+    const toFieldKey = (col: string) =>
+      col.trim().replace(/\s+/g, ' ').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'field';
+    const normLabel = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
     if (updatedFields.length === 0) {
       updatedFields = columns.map((col, idx) => ({
-        key: col.toLowerCase().replace(/\s+/g, '_'),
+        key: toFieldKey(col),
         label: col,
         x: 50,
         y: 40 + idx * 8,
@@ -601,6 +605,32 @@ export const AdminDashboard: React.FC = () => {
         lineHeight: 24,
         visible: true,
       }));
+    } else {
+      // Naye Excel batch me naye columns aaye to unke fields auto-create karo
+      // (warna canvas par wo column kabhi catch/show nahi hoga).
+      const existingKeys = new Set(updatedFields.map(f => f.key));
+      const existingLabels = new Set(updatedFields.map(f => normLabel(f.label)));
+      columns.forEach((col, idx) => {
+        const key = toFieldKey(col);
+        if (!existingKeys.has(key) && !existingLabels.has(normLabel(col))) {
+          existingKeys.add(key);
+          existingLabels.add(normLabel(col));
+          updatedFields = [...updatedFields, {
+            key,
+            label: col,
+            x: 50,
+            y: 40 + (updatedFields.length % 8) * 8,
+            fontSize: idx === 0 ? 28 : 16,
+            color: idx === 0 ? '#0f5132' : '#222222',
+            fontFamily: idx === 0 ? 'Georgia, serif' : 'sans-serif',
+            isBold: idx === 0,
+            align: 'center',
+            maxWidth: 750,
+            lineHeight: 24,
+            visible: true,
+          }];
+        }
+      });
     }
 
     const dbCertsToInsert: any[] = [];
