@@ -673,6 +673,15 @@ export const AdminDashboard: React.FC = () => {
 
     records.forEach((row) => {
       const serialNumber = generateCertificateNumber();
+      // Cert-No usi row ke data me bhi save (Master Excel column + verify fallback).
+      // 'Certificate No' canonical key hai; purane mismatch-proof ke liye
+      // normalized variants bhi rakhe hain (verify JSONB fallback inhe pakdega).
+      const rowWithCertNo: Record<string, string> = {
+        ...row,
+        'Certificate No': serialNumber,
+        certificate_no: serialNumber,
+        Certificate_No: serialNumber,
+      };
       const certObj: IssuedCertificate = {
         certificate_no: serialNumber,
         event_id: currentEvent.id,
@@ -680,7 +689,7 @@ export const AdminDashboard: React.FC = () => {
         batchId,
         issue_date: new Date().toISOString().split('T')[0],
         status: 'verified',
-        data: row,
+        data: rowWithCertNo,
       };
 
       localNewCerts.push(certObj);
@@ -691,7 +700,7 @@ export const AdminDashboard: React.FC = () => {
         batch_id: batchId,
         issue_date: certObj.issue_date,
         status: 'verified',
-        data: row,
+        data: rowWithCertNo,
         created_by: userId
       });
     });
@@ -756,12 +765,16 @@ export const AdminDashboard: React.FC = () => {
 
   const handleExportEventExcel = () => {
     if (certificates.length === 0) return alert('Records khali hain!');
-    const exportRows = certificates.map((c) => ({
-      'Certificate No': c.certificate_no,
-      Status: c.status,
-      'Issue Date': c.issue_date,
-      ...c.data,
-    }));
+    const exportRows = certificates.map((c) => {
+      const { certificate_no: _dup1, Certificate_No: _dup2, ...restData } = (c.data || {}) as Record<string, string>;
+      void _dup1; void _dup2;
+      return {
+        'Certificate No': c.certificate_no,
+        Status: c.status,
+        'Issue Date': c.issue_date,
+        ...restData,
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(exportRows);
     const wb = XLSX.utils.book_new();

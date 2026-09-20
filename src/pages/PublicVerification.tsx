@@ -86,30 +86,50 @@ export const PublicVerification: React.FC = () => {
     setCert(null);
     setErrorMsg('');
 
-    // 1) Exact match (case-sensitive) — sabse tez + deterministic.
+    // 1) Exact match (PK column) — limit(2): maybeSingle nahi, taaki
+    //    duplicate-row par PGRST116 crash ki jagah pehli row le lein.
     // 2) Nahi mila to case-insensitive exact (ilike, wildcard-escaped).
-    // Dono me select + maybeSingle, taaki 0/2+ rows par crash na ho.
+    // 3) Uske baad row ke data JSONB ke andar 'Certificate No' column fallback
+    //    (naye uploads me cert-no row-data me bhi store hota hai).
     const escaped = cleanTarget.replace(/[%_\\]/g, (ch) => `\\${ch}`);
     let certData: any = null;
+    let lastErr: any = null;
 
     const exactRes = await supabase
       .from('certificates')
-      .select('certificate_no, event_id, event_name, issue_date, status, data')
+      .select('*')
       .eq('certificate_no', cleanTarget)
-      .maybeSingle();
-    if (!exactRes.error && exactRes.data) {
-      certData = exactRes.data;
+      .limit(2);
+    if (!exactRes.error && exactRes.data && exactRes.data.length > 0) {
+      certData = exactRes.data[0];
     } else {
+      if (exactRes.error) lastErr = exactRes.error;
       const ciRes = await supabase
         .from('certificates')
-        .select('certificate_no, event_id, event_name, issue_date, status, data')
+        .select('*')
         .ilike('certificate_no', escaped)
-        .maybeSingle();
-      if (!ciRes.error && ciRes.data) {
-        certData = ciRes.data;
-      } else if (ciRes.error) {
-        setErrorMsg('Verification lookup fail ho gaya. Please dobara try karein.');
+        .limit(2);
+      if (!ciRes.error && ciRes.data && ciRes.data.length > 0) {
+        certData = ciRes.data[0];
+      } else {
+        if (ciRes.error) lastErr = ciRes.error;
+        // JSONB fallback: data->>'Certificate No' exact
+        const jsonRes = await supabase
+          .from('certificates')
+          .select('*')
+          .eq('data->>Certificate No', cleanTarget)
+          .limit(2);
+        if (!jsonRes.error && jsonRes.data && jsonRes.data.length > 0) {
+          certData = jsonRes.data[0];
+        } else if (jsonRes.error) {
+          lastErr = jsonRes.error;
+        }
       }
+    }
+
+    if (!certData && lastErr) {
+      const code = lastErr?.code ? `[${lastErr.code}] ` : '';
+      setErrorMsg(`${code}${lastErr?.message || String(lastErr)}`);
     }
 
     if (certData) {
