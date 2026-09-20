@@ -37,15 +37,27 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   const selectedField = selectedElementKey ? (event.fields.find(f => f.key === selectedElementKey) || null) : null;
 
   // ---------------- DRAG ----------------
+  // Header/row key mismatch se bachne ke liye: key, label, normalized teeno se match.
+  const normKey = (s: string) =>
+    (s || '').trim().replace(/\s+/g, ' ').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const getFieldValue = (field: DynamicFieldDef): string => {
+    const d = cert.data || {};
+    return d[field.key] ?? d[field.label] ?? d[normKey(field.label)] ?? d[normKey(field.key)] ?? '';
+  };
+
+  const isLockedKey = (key: string): boolean => {
+    if (key === '__cert_no__') return !!event.certNoConfig.isLocked;
+    if (key === '__qr_code__') return !!event.qrConfig.isLocked;
+    return !!event.fields.find(f => f.key === key)?.isLocked;
+  };
+
   const handleMouseDown = (key: string, e: React.MouseEvent) => {
     if (readOnly) return;
     e.preventDefault();
     e.stopPropagation();
-    if (key === '__cert_no__' && event.certNoConfig.isLocked) return;
-    if (key === '__qr_code__' && event.qrConfig.isLocked) return;
-    const field = event.fields.find(f => f.key === key);
-    if (field && field.isLocked) return;
+    // Locked layer select ho sakta hai (inspector dikhe) par drag nahi hoga.
     setSelectedElementKey(key);
+    if (isLockedKey(key)) return;
     setDraggingKey(key);
   };
 
@@ -165,10 +177,15 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   };
 
   // ---------------- EXPORT (PNG + PDF) ----------------
+  // Export se pehle selection ring/placeholder hatate hain taaki
+  // official PDF/PNG me sirf asli data (positions match) jaye.
   const handleExportCanvas = async (format: 'pdf' | 'png') => {
     if (!containerRef.current || isExporting) return;
     setIsExporting(true);
+    const prevSelected = selectedElementKey;
+    setSelectedElementKey(null);
     try {
+      await new Promise<void>((resolve) => setTimeout(() => resolve(), 60));
       const canvas = await html2canvas(containerRef.current, {
         scale: 2,
         useCORS: true,
@@ -194,12 +211,48 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       console.error('Export error:', err);
       alert('Certificate export fail ho gaya. Please try again.');
     } finally {
+      setSelectedElementKey(prevSelected);
       setIsExporting(false);
     }
   };
 
   return (
     <div className="relative w-full select-none">
+      {/* Live Edit Preview — selected layer ka actual text, bara + proper distance par */}
+      {!readOnly && selectedElementKey && (
+        <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3">
+          <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider mb-1">
+            Live Preview — {selectedElementKey === '__cert_no__' ? 'Certificate No' : selectedElementKey === '__qr_code__' ? 'QR Code' : (selectedField?.label || selectedElementKey)}
+          </p>
+          {selectedElementKey === '__qr_code__' ? (
+            <div className="inline-block bg-white p-1.5 rounded-lg border border-amber-200">
+              <QRCodeSVG value={getQrVerificationUrl()} size={64} level="M" />
+            </div>
+          ) : (
+            <p
+              className="break-words"
+              style={{
+                fontFamily: selectedElementKey === '__cert_no__'
+                  ? (event.certNoConfig.fontFamily || 'Georgia, serif')
+                  : (selectedField?.fontFamily ?? 'Georgia, serif'),
+                fontSize: `${Math.min(34, Math.max(16, selectedElementKey === '__cert_no__' ? event.certNoConfig.fontSize : (selectedField?.fontSize ?? 16)))}px`,
+                fontWeight: (selectedElementKey === '__cert_no__' ? event.certNoConfig.isBold : selectedField?.isBold) ? 700 : 400,
+                fontStyle: selectedField?.isItalic ? 'italic' : 'normal',
+                letterSpacing: `${selectedField?.letterSpacing ?? 0}px`,
+                textTransform: selectedField?.isUppercase ? 'uppercase' : 'none',
+                textAlign: (selectedField?.align as any) || 'left',
+                color: selectedElementKey === '__cert_no__' ? event.certNoConfig.color : (selectedField?.color ?? '#111827'),
+                lineHeight: selectedField?.lineHeight ?? 1.4,
+              }}
+            >
+              {selectedElementKey === '__cert_no__'
+                ? cert.certificate_no
+                : (selectedField ? (getProcessedText(getFieldValue(selectedField), selectedField) || `(${selectedField.label} — is record me khali)`) : '')}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Zoom + Lock Controls */}
       <div className="absolute top-3 right-3 z-20 flex items-center gap-1 bg-white/90 backdrop-blur-sm rounded-xl shadow border border-gray-200 p-1">
         <button onClick={handleZoomOut} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"><ZoomOut size={15} /></button>
@@ -208,6 +261,9 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       </div>
       {!readOnly && (
         <div className="absolute top-3 left-3 z-20 flex items-center gap-2 bg-white/90 backdrop-blur-sm rounded-xl shadow border border-gray-200 px-3 py-1.5">
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${event.fields.every(f => f.isLocked) && event.qrConfig.isLocked && event.certNoConfig.isLocked ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+            {event.fields.every(f => f.isLocked) && event.qrConfig.isLocked && event.certNoConfig.isLocked ? '🔒 Locked' : '🔓 Unlocked'}
+          </span>
           <button onClick={handleLockAxisAll} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200 cursor-pointer">
             <Lock size={12} /> Lock All
           </button>
@@ -217,9 +273,9 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
         </div>
       )}
 
-      {/* Inspector Ribbon */}
+      {/* Inspector Ribbon (canvas ke UPAR docked — editing ab proper distance par dikhegi) */}
       {!readOnly && selectedElementKey && (
-        <div className="absolute top-14 left-3 z-20 bg-white/95 backdrop-blur-sm rounded-xl shadow-xl border border-gray-200 p-3 space-y-2.5 w-72 max-h-[70vh] overflow-y-auto">
+        <div className="relative z-20 bg-white rounded-2xl shadow border border-gray-200 p-3 mb-3 space-y-2.5">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
               Inspector — {selectedElementKey === '__cert_no__' ? 'Certificate No' : selectedElementKey === '__qr_code__' ? 'QR Code' : (selectedField?.label || selectedElementKey)}
@@ -351,29 +407,34 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               </div>
             )}
             {event.fields.filter(f => f.visible).map(field => {
-              const raw = cert.data[field.key] ?? '';
-              if (!raw) return null;
-              const text = getProcessedText(raw, field);
+              // key/label/normalized fallback — purane batches ka data bhi catch hoga
+              const raw = getFieldValue(field);
+              // Khali value par admin ko layer dikhe (placeholder), taaki select/edit ho sake.
+              // Export/PDF me placeholder nahi jayega — waha raw empty = render skip (neeche).
+              const isEmpty = !raw;
+              const text = isEmpty ? `[${field.label}]` : getProcessedText(raw, field);
               const isSel = selectedElementKey === field.key;
+              const locked = !!field.isLocked;
               return (
                 <div
                   key={field.key}
                   onMouseDown={(e) => handleMouseDown(field.key, e)}
-                  className={`absolute ${readOnly ? '' : 'cursor-move'} ${isSel && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''}`}
+                  className={`absolute ${readOnly ? '' : locked ? 'cursor-not-allowed' : 'cursor-move'} ${isSel && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''} ${isEmpty && !readOnly ? 'outline outline-1 outline-dashed outline-slate-300 rounded' : ''}`}
                   style={{
                     left: `${field.x}%`, top: `${field.y}%`, width: `${field.maxWidth}%`,
                     transform: `translate(-50%, -50%) rotate(${field.rotation ?? 0}deg)`,
-                    textAlign: field.align, color: field.color, fontFamily: field.fontFamily,
+                    textAlign: field.align, color: isEmpty ? '#94a3b8' : field.color, fontFamily: field.fontFamily,
                     fontSize: `${field.fontSize}px`, fontWeight: field.isBold ? 700 : 400,
                     fontStyle: field.isItalic ? 'italic' : 'normal',
                     lineHeight: field.lineHeight, letterSpacing: `${field.letterSpacing ?? 0}px`,
                     wordBreak: 'break-word', overflow: 'hidden',
                     display: '-webkit-box', WebkitLineClamp: field.maxLines ?? 1,
                     WebkitBoxOrient: 'vertical' as const, userSelect: 'none',
+                    opacity: isEmpty && readOnly ? 0 : 1,
                   }}
-                  title={readOnly ? field.label : `${field.label} — drag karein`}
+                  title={readOnly ? field.label : locked ? `${field.label} — locked hai (Unlock karo)` : `${field.label} — drag karein`}
                 >
-                  {text}
+                  {(!isEmpty || !readOnly) ? text : ''}
                 </div>
               );
             })}
