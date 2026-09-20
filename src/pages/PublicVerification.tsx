@@ -113,11 +113,12 @@ export const PublicVerification: React.FC = () => {
         certData = ciRes.data[0];
       } else {
         if (ciRes.error) lastErr = ciRes.error;
-        // JSONB fallback: data->>'Certificate No' exact
+        // JSONB fallback: data ke andar 'Certificate No' exact
+        // (PostgREST filter syntax: data->>Certificate No)
         const jsonRes = await supabase
           .from('certificates')
           .select('*')
-          .eq('data->>Certificate No', cleanTarget)
+          .filter('data->>Certificate No', 'eq', cleanTarget)
           .limit(2);
         if (!jsonRes.error && jsonRes.data && jsonRes.data.length > 0) {
           certData = jsonRes.data[0];
