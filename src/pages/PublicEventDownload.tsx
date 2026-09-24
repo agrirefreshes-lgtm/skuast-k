@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import type { EventItem, IssuedCertificate } from '../types/certificate';
 import { CertificateCanvas } from '../components/CertificateCanvas';
+import { getFieldDisplayLabel, getFieldReference, resolveFieldReferenceValue } from '../lib/certificateFields';
+
 import { supabase } from '../lib/supabaseClient';
 import { ShieldAlert, Download, Building2, CheckCircle2, Lock, Loader2 } from 'lucide-react';
 
@@ -73,12 +75,12 @@ export const PublicEventDownload: React.FC = () => {
       .eq('status', 'verified');
 
     if (!error && certsList) {
-      const pKey = event.primaryAuthField || (event.fields[0]?.label ?? '');
-      const sKey = event.securityAuthField || (event.fields[1]?.label ?? '');
+      const pKey = event.primaryAuthField || getFieldReference(event.fields[0]);
+      const sKey = event.securityAuthField || getFieldReference(event.fields[1]);
 
       const found = certsList.find((c: any) => {
-        const pVal = c.data[pKey] || '';
-        const sVal = c.data[sKey] || '';
+        const pVal = resolveFieldReferenceValue(c.data || {}, event.fields, pKey);
+        const sVal = resolveFieldReferenceValue(c.data || {}, event.fields, sKey);
         const match1 = norm(pVal) === norm(primaryInput) || norm(c.certificate_no) === norm(primaryInput);
         const match2 = norm(sVal) === norm(securityInput);
         return match1 && match2;
@@ -126,8 +128,10 @@ export const PublicEventDownload: React.FC = () => {
     );
   }
 
-  const primaryLabel = event.primaryAuthField || event.fields[0]?.label || 'Candidate Name';
-  const securityLabel = event.securityAuthField || event.fields[1]?.label || 'Security Verification';
+  const primaryReference = event.primaryAuthField || getFieldReference(event.fields[0]);
+  const securityReference = event.securityAuthField || getFieldReference(event.fields[1]);
+  const primaryLabel = getFieldDisplayLabel(event.fields, primaryReference) || 'Candidate Name';
+  const securityLabel = getFieldDisplayLabel(event.fields, securityReference) || 'Security Verification';
   const isActive = event.isDownloadEnabled !== false && event.isPublished !== false;
 
   return (
