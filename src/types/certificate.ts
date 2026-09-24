@@ -1,6 +1,9 @@
 export interface DynamicFieldDef {
   key: string;
   label: string;
+  sourceKey?: string;
+  sourceIndex?: number;
+  isPlaced?: boolean;
   x: number;
   y: number;
   fontSize: number;
@@ -18,6 +21,12 @@ export interface DynamicFieldDef {
   isLocked?: boolean;
   letterSpacing?: number;
   rotation?: number;
+}
+
+export interface UploadedColumnDefinition {
+  key: string;
+  label: string;
+  sourceIndex: number;
 }
 
 export interface UploadedBatch {

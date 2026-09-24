@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { CertificateCanvas } from '../components/CertificateCanvas';
 import type { EventItem, IssuedCertificate } from '../types/certificate';
+import { getFieldDisplayLabel, getFieldReference, resolveFieldReferenceValue } from '../lib/certificateFields';
+
 import { 
   ShieldCheck, 
   Search, 
@@ -183,11 +185,11 @@ export const UserPortal: React.FC = () => {
         const cleanUserPrimary = normalize(primaryInput);
         const cleanUserSecurity = normalize(securityInput);
 
-        const pKey = currentEvent.primaryAuthField || (currentEvent.fields[0]?.label ?? '');
-        const sKey = currentEvent.securityAuthField || (currentEvent.fields[1]?.label ?? '');
+        const pKey = currentEvent.primaryAuthField || getFieldReference(currentEvent.fields[0]);
+        const sKey = currentEvent.securityAuthField || getFieldReference(currentEvent.fields[1]);
 
-        const pVal = recordData[pKey] || '';
-        const sVal = recordData[sKey] || '';
+        const pVal = resolveFieldReferenceValue(recordData, currentEvent.fields, pKey);
+        const sVal = resolveFieldReferenceValue(recordData, currentEvent.fields, sKey);
 
         const foundPrimary = normalize(pVal) === cleanUserPrimary || normalize(c.certificate_no) === cleanUserPrimary;
         const foundSecurity = normalize(sVal) === cleanUserSecurity;
@@ -222,6 +224,13 @@ export const UserPortal: React.FC = () => {
       setVerifying(false);
     }
   };
+
+  const primaryLabel = currentEvent
+    ? getFieldDisplayLabel(currentEvent.fields, currentEvent.primaryAuthField || getFieldReference(currentEvent.fields[0])) || 'Student Name'
+    : 'Student Name';
+  const securityLabel = currentEvent
+    ? getFieldDisplayLabel(currentEvent.fields, currentEvent.securityAuthField || getFieldReference(currentEvent.fields[1])) || 'Student Name'
+    : 'Student Name';
 
   return (
     <div className="min-h-screen bg-slate-100 py-8 px-4 font-sans">
@@ -351,12 +360,12 @@ export const UserPortal: React.FC = () => {
               {/* Primary Input */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">
-                  1. {currentEvent?.primaryAuthField || 'Student Name'} *
+                  1. {primaryLabel} *
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder={`Enter your ${currentEvent?.primaryAuthField || 'Student Name'}`}
+                  placeholder={`Enter your ${primaryLabel}`}
                   value={primaryInput}
                   onChange={(e) => setPrimaryInput(e.target.value)}
                   className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"
@@ -367,12 +376,12 @@ export const UserPortal: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center gap-1">
                   <Lock size={12} className="text-amber-500" />
-                  2. {currentEvent?.securityAuthField || 'Student Name'} *
+                  2. {securityLabel} *
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder={`Confirm your ${currentEvent?.securityAuthField || 'Student Name'}`}
+                  placeholder={`Confirm your ${securityLabel}`}
                   value={securityInput}
                   onChange={(e) => setSecurityInput(e.target.value)}
                   className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-emerald-700 focus:outline-none"

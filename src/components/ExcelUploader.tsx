@@ -1,62 +1,18 @@
 import React from 'react';
 import * as XLSX from 'xlsx';
 import { UploadCloud } from 'lucide-react';
+import type { UploadedColumnDefinition } from '../types/certificate';
+import { parseDelimitedText, recordsFromRows } from '../lib/certificateFields';
 
 interface Props {
-  onParsed: (records: Record<string, string>[], columns: string[], fileName: string) => void;
+  onParsed: (
+    records: Record<string, string>[],
+    columns: UploadedColumnDefinition[],
+    fileName: string
+  ) => void;
 }
 
 export const ExcelUploader: React.FC<Props> = ({ onParsed }) => {
-  const normalizeHeaders = (headers: string[]): string[] =>
-    headers.map((h) => h.trim().replace(/\s+/g, ' '));
-
-  const parseCSVText = (raw: string): { records: Record<string, string>[]; headers: string[] } => {
-    // If file looks like actual CSV (has newlines and commas)
-    const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
-    if (lines.length < 2) return { records: [], headers: [] };
-
-    // Try to detect delimiter
-    const firstLine = lines[0];
-    const commaCount = (firstLine.match(/,/g) || []).length;
-    const tabCount = (firstLine.match(/\t/g) || []).length;
-    const delimiter = tabCount > commaCount ? '\t' : ',';
-
-    const headers = normalizeHeaders(lines[0].split(delimiter));
-    const records: Record<string, string>[] = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const values = splitCSVLine(lines[i], delimiter);
-      if (values.length === 0) continue;
-      const row: Record<string, string> = {};
-      headers.forEach((h, idx) => {
-        row[h] = values[idx] !== undefined ? values[idx].trim() : '';
-      });
-      records.push(row);
-    }
-
-    return { records, headers };
-  };
-
-  // Simple CSV line splitter that respects quoted values
-  const splitCSVLine = (line: string, delimiter: string): string[] => {
-    const result: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        inQuotes = !inQuotes;
-      } else if (ch === delimiter && !inQuotes) {
-        result.push(current);
-        current = '';
-      } else {
-        current += ch;
-      }
-    }
-    result.push(current);
-    return result;
-  };
-
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -71,12 +27,12 @@ export const ExcelUploader: React.FC<Props> = ({ onParsed }) => {
           alert('CSV file read error!');
           return;
         }
-        const { records, headers } = parseCSVText(text);
+        const { records, columns } = parseDelimitedText(text);
         if (records.length === 0) {
           alert('CSV khali hai ya koi row nahi mili!');
           return;
         }
-        onParsed(records, headers, file.name);
+        onParsed(records, columns, file.name);
         e.target.value = '';
       };
       reader.readAsText(file, 'UTF-8');
@@ -104,24 +60,15 @@ export const ExcelUploader: React.FC<Props> = ({ onParsed }) => {
       }
 
       const ws = wb.Sheets[sheetName];
-      const rawData: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      const rawData = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
+      const { records, columns } = recordsFromRows(rawData);
 
-      if (rawData.length === 0) {
+      if (records.length === 0) {
         alert('File khali hai ya koi row nahi mili!');
         return;
       }
 
-      const headers = normalizeHeaders(Object.keys(rawData[0]));
-      const parsed = rawData.map((row) => {
-        const item: Record<string, string> = {};
-        headers.forEach((col) => {
-          const val = row[col];
-          item[col] = val === null || val === undefined ? '' : String(val);
-        });
-        return item;
-      });
-
-      onParsed(parsed, headers, file.name);
+      onParsed(records, columns, file.name);
       e.target.value = '';
     };
     reader.readAsBinaryString(file);

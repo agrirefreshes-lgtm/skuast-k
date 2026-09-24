@@ -1,11 +1,18 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
-import type { EventItem, IssuedCertificate, DynamicFieldDef, UploadedBatch } from '../types/certificate';
+import type { EventItem, IssuedCertificate, UploadedBatch, UploadedColumnDefinition } from '../types/certificate';
 import { ExcelUploader } from '../components/ExcelUploader';
 import { CertificateCanvas } from '../components/CertificateCanvas';
 import { AdminLogin } from '../components/AdminLogin';
 import { supabase } from '../lib/supabaseClient';
 import { getEventUrl } from '../lib/shareUrl';
+import {
+  getFieldDisplayLabel,
+  getFieldReference,
+  normalizeFieldReference,
+  reconcileDynamicFields
+} from '../lib/certificateFields';
+
 import { 
   FolderPlus, 
   Download, 
@@ -573,7 +580,11 @@ export const AdminDashboard: React.FC = () => {
     saveEventToDb(updated);
   };
 
-  const handleExcelParsed = async (records: Record<string, string>[], columns: string[], fileName: string) => {
+  const handleExcelParsed = async (
+    records: Record<string, string>[],
+    columns: UploadedColumnDefinition[],
+    fileName: string
+  ) => {
     const userId = await verifyLiveSession();
     if (!userId || !currentEvent) return;
 
@@ -585,53 +596,7 @@ export const AdminDashboard: React.FC = () => {
       count: records.length,
     };
 
-    let updatedFields: DynamicFieldDef[] = [...currentEvent.fields];
-    // Stable key: header normalize (trim + multi-space collapse + lower + _)
-    const toFieldKey = (col: string) =>
-      col.trim().replace(/\s+/g, ' ').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'field';
-    const normLabel = (s: string) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
-    if (updatedFields.length === 0) {
-      updatedFields = columns.map((col, idx) => ({
-        key: toFieldKey(col),
-        label: col,
-        x: 50,
-        y: 40 + idx * 8,
-        fontSize: idx === 0 ? 28 : 16,
-        color: idx === 0 ? '#0f5132' : '#222222',
-        fontFamily: idx === 0 ? 'Georgia, serif' : 'sans-serif',
-        isBold: idx === 0,
-        align: 'center',
-        maxWidth: 750,
-        lineHeight: 24,
-        visible: true,
-      }));
-    } else {
-      // Naye Excel batch me naye columns aaye to unke fields auto-create karo
-      // (warna canvas par wo column kabhi catch/show nahi hoga).
-      const existingKeys = new Set(updatedFields.map(f => f.key));
-      const existingLabels = new Set(updatedFields.map(f => normLabel(f.label)));
-      columns.forEach((col, idx) => {
-        const key = toFieldKey(col);
-        if (!existingKeys.has(key) && !existingLabels.has(normLabel(col))) {
-          existingKeys.add(key);
-          existingLabels.add(normLabel(col));
-          updatedFields = [...updatedFields, {
-            key,
-            label: col,
-            x: 50,
-            y: 40 + (updatedFields.length % 8) * 8,
-            fontSize: idx === 0 ? 28 : 16,
-            color: idx === 0 ? '#0f5132' : '#222222',
-            fontFamily: idx === 0 ? 'Georgia, serif' : 'sans-serif',
-            isBold: idx === 0,
-            align: 'center',
-            maxWidth: 750,
-            lineHeight: 24,
-            visible: true,
-          }];
-        }
-      });
-    }
+    const updatedFields = reconcileDynamicFields(currentEvent.fields, columns);
 
     const dbCertsToInsert: any[] = [];
     const localNewCerts: IssuedCertificate[] = [];
@@ -705,8 +670,10 @@ export const AdminDashboard: React.FC = () => {
       });
     });
 
-    const pField = currentEvent.primaryAuthField || updatedFields[0]?.label || '';
-    const sField = currentEvent.securityAuthField || updatedFields[1]?.label || '';
+    const pField = normalizeFieldReference(updatedFields, currentEvent.primaryAuthField)
+      || getFieldReference(updatedFields[0]);
+    const sField = normalizeFieldReference(updatedFields, currentEvent.securityAuthField)
+      || getFieldReference(updatedFields[1]);
 
     const updatedEvent: EventItem = {
       ...currentEvent,
@@ -1110,20 +1077,21 @@ export const AdminDashboard: React.FC = () => {
                     <h3 className="text-xs font-bold text-gray-800">2-Factor Security Authentication for Public Download</h3>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                    <div>
+                    <div className="min-w-0">
                       <label className="block text-[11px] font-bold text-gray-700 mb-1">Primary Identifier (Name) *</label>
                       <select
                         value={currentEvent.primaryAuthField}
                         onChange={(e) => handleUpdateEvent({ ...currentEvent, primaryAuthField: e.target.value })}
-                        className="w-full text-xs p-2 rounded-lg border bg-slate-50"
+                        className="block w-fit min-w-[10rem] max-w-full truncate h-auto min-h-9 max-h-12 text-xs p-2 rounded-lg border bg-slate-50"
+                        title={getFieldDisplayLabel(currentEvent.fields, currentEvent.primaryAuthField)}
                       >
                         <option value="">-- Select Name Column --</option>
                         {currentEvent.fields.map((f) => (
-                          <option key={f.key} value={f.label}>{f.label}</option>
+                          <option key={f.key} value={getFieldReference(f)}>{f.label}</option>
                         ))}
                       </select>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <label className="block text-[11px] font-bold text-gray-700 mb-1">Security Check (Reg No / Mobile) * (Name se alag hona chahiye)</label>
                       <select
                         value={currentEvent.securityAuthField}
@@ -1135,11 +1103,12 @@ export const AdminDashboard: React.FC = () => {
                           }
                           handleUpdateEvent({ ...currentEvent, securityAuthField: v });
                         }}
-                        className="w-full text-xs p-2 rounded-lg border bg-slate-50"
+                        className="block w-fit min-w-[10rem] max-w-full truncate h-auto min-h-9 max-h-12 text-xs p-2 rounded-lg border bg-slate-50"
+                        title={getFieldDisplayLabel(currentEvent.fields, currentEvent.securityAuthField)}
                       >
                         <option value="">-- Select Security Column --</option>
                         {currentEvent.fields.map((f) => (
-                          <option key={f.key} value={f.label}>{f.label}</option>
+                          <option key={f.key} value={getFieldReference(f)}>{f.label}</option>
                         ))}
                       </select>
                     </div>

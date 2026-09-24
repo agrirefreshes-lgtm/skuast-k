@@ -5,6 +5,9 @@ import type { EventItem, IssuedCertificate, DynamicFieldDef } from '../types/cer
 import { QRCodeSVG } from 'qrcode.react';
 import { getVerifyUrl } from '../lib/shareUrl';
 import {
+  getFieldWidthPercent, isFieldPlaced, resolveFieldValue
+} from '../lib/certificateFields';
+import {
   Bold, Italic, AlignLeft, AlignCenter, AlignRight, Palette, Type,
   X, Lock, Unlock, ZoomIn, ZoomOut, Download, Loader2, Eye, EyeOff
 } from 'lucide-react';
@@ -36,14 +39,9 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   const getQrVerificationUrl = () => getVerifyUrl(cert.certificate_no);
   const selectedField = selectedElementKey ? (event.fields.find(f => f.key === selectedElementKey) || null) : null;
 
-  // ---------------- DRAG ----------------
-  // Header/row key mismatch se bachne ke liye: key, label, normalized teeno se match.
-  const normKey = (s: string) =>
-    (s || '').trim().replace(/\s+/g, ' ').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  const getFieldValue = (field: DynamicFieldDef): string => {
-    const d = cert.data || {};
-    return d[field.key] ?? d[field.label] ?? d[normKey(field.label)] ?? d[normKey(field.key)] ?? '';
-  };
+  // Values resolve only for the current row; the stored field remains a source reference.
+  const getFieldValue = (field: DynamicFieldDef): string =>
+    resolveFieldValue(cert.data || {}, field);
 
   const isLockedKey = (key: string): boolean => {
     if (key === '__cert_no__') return !!event.certNoConfig.isLocked;
@@ -93,6 +91,16 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
     if (!onUpdateEvent) return;
     const updatedFields = event.fields.map(f => f.key === key ? { ...f, ...patch } : f);
     onUpdateEvent({ ...event, fields: updatedFields });
+  };
+
+  const placeFieldFromDrop = (key: string, clientX: number, clientY: number) => {
+    const field = event.fields.find((item) => item.key === key);
+    if (!field || !containerRef.current || field.isLocked) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(100, Number((((clientX - rect.left) / rect.width) * 100).toFixed(2))));
+    const y = Math.max(0, Math.min(100, Number((((clientY - rect.top) / rect.height) * 100).toFixed(2))));
+    updateField(key, { x, y, isPlaced: true });
+    setSelectedElementKey(key);
   };
 
   const handleFontFamilyChange = (key: string, fontFamily: string) => {
@@ -345,8 +353,8 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-slate-400 w-10 shrink-0">Width</span>
-                <input type="range" min={0} max={100} value={selectedField.maxWidth} onChange={(e) => handleMaxWidthChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
-                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{selectedField.maxWidth}%</span>
+                <input type="range" min={0} max={100} value={getFieldWidthPercent(selectedField.maxWidth)} onChange={(e) => handleMaxWidthChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
+                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{getFieldWidthPercent(selectedField.maxWidth)}%</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-slate-400 w-10 shrink-0">LHeight</span>
@@ -396,6 +404,19 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
           <div
             ref={containerRef}
             onClick={() => { if (!readOnly) setSelectedElementKey(null); }}
+            onDragOver={(e) => {
+              const isFieldDrag = Array.from(e.dataTransfer.types).includes('application/x-skuastk-certificate-field');
+              if (readOnly || !isFieldDrag) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+            }}
+            onDrop={(e) => {
+              const key = e.dataTransfer.getData('application/x-skuastk-certificate-field');
+              if (readOnly || !key) return;
+              e.preventDefault();
+              e.stopPropagation();
+              placeFieldFromDrop(key, e.clientX, e.clientY);
+            }}
             className="relative bg-white shadow-lg overflow-hidden"
             style={{ width: '1123px', maxWidth: '100%', aspectRatio: '1.414 / 1' }}
           >
@@ -406,8 +427,8 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                 <p className="text-xs text-slate-400">Template upload karein — blank preview</p>
               </div>
             )}
-            {event.fields.filter(f => f.visible).map(field => {
-              // key/label/normalized fallback — purane batches ka data bhi catch hoga
+            {event.fields.filter(f => f.visible && isFieldPlaced(f)).map(field => {
+              // Resolve the stored source reference against the active row only while rendering.
               const raw = getFieldValue(field);
               // Khali value par admin ko layer dikhe (placeholder), taaki select/edit ho sake.
               // Export/PDF me placeholder nahi jayega — waha raw empty = render skip (neeche).
@@ -421,7 +442,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   onMouseDown={(e) => handleMouseDown(field.key, e)}
                   className={`absolute ${readOnly ? '' : locked ? 'cursor-not-allowed' : 'cursor-move'} ${isSel && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''} ${isEmpty && !readOnly ? 'outline outline-1 outline-dashed outline-slate-300 rounded' : ''}`}
                   style={{
-                    left: `${field.x}%`, top: `${field.y}%`, width: `${field.maxWidth}%`,
+                    left: `${field.x}%`, top: `${field.y}%`, width: `${getFieldWidthPercent(field.maxWidth)}%`,
                     transform: `translate(-50%, -50%) rotate(${field.rotation ?? 0}deg)`,
                     textAlign: field.align, color: isEmpty ? '#94a3b8' : field.color, fontFamily: field.fontFamily,
                     fontSize: `${field.fontSize}px`, fontWeight: field.isBold ? 700 : 400,
@@ -434,7 +455,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   }}
                   title={readOnly ? field.label : locked ? `${field.label} — locked hai (Unlock karo)` : `${field.label} — drag karein`}
                 >
-                  {(!isEmpty || !readOnly) ? text : ''}
+                  {!isEmpty ? text : ''}
                 </div>
               );
             })}
@@ -472,18 +493,45 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
           </div>
         </div>
       </div>
-      {/* Layer List */}
+      {/* Dynamic fields detected from the uploaded sheet */}
+      {!readOnly && (
+        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-3">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Dynamic Data Fields</span>
+            <span className="text-[10px] text-slate-500">Drag a field onto the certificate</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+            {event.fields.map((field) => (
+              <button
+                key={field.key}
+                type="button"
+                draggable={!field.isLocked}
+                onDragStart={(e) => {
+                  e.stopPropagation();
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('application/x-skuastk-certificate-field', field.key);
+                  e.dataTransfer.setData('text/plain', field.key);
+                }}
+                onClick={() => setSelectedElementKey(field.key)}
+                title={field.isLocked ? `${field.label} — locked hai pehle unlock karein` : `${field.label} — drag karein`}
+                className={`max-w-full break-words px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-grab active:cursor-grabbing ${
+                  selectedElementKey === field.key
+                    ? 'bg-emerald-800 text-white border-emerald-800'
+                    : 'bg-white text-slate-600 border-gray-200 hover:border-emerald-300'
+                } ${field.isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                {field.label}{isFieldPlaced(field) ? ' ↗' : ''}{field.isLocked ? ' 🔒' : ''}
+              </button>
+            ))}
+            {event.fields.length === 0 && (
+              <span className="text-[11px] text-slate-500">Upload Excel/CSV to populate dynamic fields.</span>
+            )}
+          </div>
+        </div>
+      )}
+      {/* Existing layer selector; dynamic palette above keeps uploaded fields separate. */}
       {!readOnly && (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {event.fields.map(f => (
-            <button
-              key={f.key}
-              onClick={() => setSelectedElementKey(f.key)}
-              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${selectedElementKey === f.key ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-white text-slate-600 border-gray-200 hover:border-emerald-300'}`}
-            >
-              {f.label}{f.isLocked ? ' 🔒' : ''}{!f.visible ? ' 👁‍🗨' : ''}
-            </button>
-          ))}
           <button
             onClick={() => setSelectedElementKey('__cert_no__')}
             className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${selectedElementKey === '__cert_no__' ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-white text-slate-600 border-gray-200 hover:border-emerald-300'}`}
