@@ -752,14 +752,22 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   onMouseDown={(e) => handleMouseDown(field.key, e)}
                   className={`absolute ${readOnly ? '' : locked ? 'cursor-not-allowed' : 'cursor-move'} ${isSel && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''} ${isEmpty && !readOnly ? 'outline outline-1 outline-dashed outline-slate-300 rounded' : ''}`}
                   style={{
-                    left: `${field.x}%`, top: `${field.y}%`, width: `${getFieldWidthPercent(field.maxWidth)}%`,
+                    left: `${field.x}%`, top: `${field.y}%`,
+                    // Tight hit-box: box text ke content jitna hi ho (maxWidth cap ke saath),
+                    // taaki click karne par poora 60% chauda invisible box select na ho.
+                    // inline-block + maxWidth se chhota text = chhota selectable area.
+                    // Khali placeholder par min-width taaki khaali field bhi pakdi ja sake.
+                    display: (field.maxLines ?? 1) > 1 ? '-webkit-box' : 'inline-block',
+                    width: (field.maxLines ?? 1) > 1 ? `${getFieldWidthPercent(field.maxWidth)}%` : 'fit-content',
+                    maxWidth: `${getFieldWidthPercent(field.maxWidth)}%`,
+                    minWidth: isEmpty && !readOnly ? '3rem' : undefined,
                     transform: `translate(-50%, -50%) rotate(${field.rotation ?? 0}deg)`,
                     textAlign: field.align, color: isEmpty ? '#94a3b8' : field.color, fontFamily: field.fontFamily,
                     fontSize: `${field.fontSize}px`, fontWeight: field.isBold ? 700 : 400,
                     fontStyle: field.isItalic ? 'italic' : 'normal',
                     lineHeight: field.lineHeight, letterSpacing: `${field.letterSpacing ?? 0}px`,
                     wordBreak: 'break-word', overflow: 'hidden',
-                    display: '-webkit-box', WebkitLineClamp: field.maxLines ?? 1,
+                    WebkitLineClamp: field.maxLines ?? 1,
                     WebkitBoxOrient: 'vertical' as const, userSelect: 'none',
                     opacity: isEmpty && readOnly ? 0 : 1,
                   }}
