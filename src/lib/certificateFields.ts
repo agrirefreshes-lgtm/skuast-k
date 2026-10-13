@@ -198,28 +198,52 @@ const createDynamicField = (
   column: UploadedColumnDefinition,
   index: number,
   usedKeys: Set<string>
-): DynamicFieldDef => ({
-  key: makeUnique(toFieldKey(column.label), usedKeys),
-  label: column.label,
-  sourceKey: column.key,
-  sourceIndex: column.sourceIndex,
-  x: 50,
-  y: 40 + (index % 8) * 8,
-  fontSize: index === 0 ? 28 : 16,
-  color: index === 0 ? '#0f5132' : '#222222',
-  fontFamily: index === 0 ? 'Georgia, serif' : 'sans-serif',
-  isBold: index === 0,
-  align: 'center',
-  maxWidth: 60,
-  lineHeight: 24,
-  visible: true,
-  isPlaced: false,
-});
+): DynamicFieldDef => {
+  // Better initial layout: spread fields across canvas to avoid overlap
+  // Use a grid layout: 3 columns × N rows
+  const col = index % 3;
+  const row = Math.floor(index / 3);
+  
+  // Start from top-left area (easier to find and drag)
+  // 3 columns at x: 15%, 50%, 85%
+  const xPositions = [15, 50, 85];
+  const x = xPositions[col];
+  
+  // Start from y: 15%, increment by 12% per row (avoid overlap with QR/cert_no at bottom)
+  const y = Math.min(85, 15 + row * 12);
+  
+  return {
+    key: makeUnique(toFieldKey(column.label), usedKeys),
+    label: column.label,
+    sourceKey: column.key,
+    sourceIndex: column.sourceIndex,
+    x,
+    y,
+    fontSize: index === 0 ? 28 : 16,
+    color: index === 0 ? '#0f5132' : '#222222',
+    fontFamily: index === 0 ? 'Georgia, serif' : 'sans-serif',
+    isBold: index === 0,
+    align: 'center',
+    maxWidth: 60,
+    lineHeight: 24,
+    visible: true,
+    isPlaced: true,  // FIXED: Set to true so they show immediately
+  };
+};
+
 
 export const reconcileDynamicFields = (
   existingFields: DynamicFieldDef[],
-  columns: UploadedColumnDefinition[]
+  columns: UploadedColumnDefinition[],
+  replaceExisting: boolean = false  // NEW: Option to replace vs merge
 ): DynamicFieldDef[] => {
+  // If replaceExisting is true, start fresh with only new columns
+  if (replaceExisting) {
+    const usedKeys = new Set<string>();
+    return columns.map((column, index) => createDynamicField(column, index, usedKeys));
+  }
+
+  // Default: Merge mode (keep existing + add new)
   const fields = existingFields.map((field) => ({ ...field }));
   const originalFields = [...fields];
   const usedKeys = new Set(fields.map((field) => field.key));
@@ -240,3 +264,4 @@ export const reconcileDynamicFields = (
 
   return fields;
 };
+

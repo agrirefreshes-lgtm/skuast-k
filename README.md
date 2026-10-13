@@ -1,75 +1,87 @@
-# React + TypeScript + Vite
+# SKUAST-K Official Digital Certification System
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Sher-e-Kashmir University of Agricultural Sciences and Technology of Kashmir (SKUAST-K)**
 
-Currently, two official plugins are available:
+A comprehensive, tamper-proof digital certificate management platform built for Sher-e-Kashmir University of Agricultural Sciences and Technology of Kashmir. Issue, download, and verify academic certificates for seminars, workshops, conferences, training programs, and events — designed for District Service Welfare (DSW) under NSS Unints.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Features
 
-## React Compiler
+- **Digital Certificate Issuance:** Auto-generate official PDF certificates for any certified event/batch.
+- **Public Verification Portal:** Anyone can verify certificate authenticity via a unique Certificate No. using QR code scanning or manual entry.
+- **QR Code Authentication:** Tamper-proof QR codes embedded on every certificate for quick mobile verification.
+- **Batch Upload (Excel/CSV):** Bulk upload candidate data from Excel/CSV sheets — auto-detect columns and map fields.
+- **Admin Dashboard:** Full-featured admin console to create events, upload templates, manage batches, and publish certificates.
+- **Event Slug Pages:** Shareable event-specific URLs (e.g., /event/{event-slug}) for targeted downloads.
+- **Cloud-Backed Security:** Backend powered by Supabase (PostgreSQL) with encrypted records and role-based access control.
+- **Official PDF Export:** Export verified certificates in high-resolution PDF format.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Tech Stack
 
-## Expanding the ESLint configuration
+| Category | Technology |
+| --- | --- |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS |
+| Routing | React Router DOM |
+| Backend | Supabase (PostgreSQL), Edge Functions |
+| PDF Generation | jsPDF, html2canvas |
+| QR Code | @zxing/browser, qrcode.react |
+| File Upload | xlsx (Excel/CSV) |
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Installation & Setup
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+```bash
+# Clone the repository
+git clone https://github.com/agrirefreshes-lgtm/skuast-k.git
+cd skuastk-cert-system
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+# Install dependencies
+npm install
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# Start development server
+npm run dev
 
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+## Deployment
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+```bash
+# Build and deploy to GitHub Pages
+npm run deploy
+```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+The deployed site is served from the /skuast-k/ base path. Update base in vite.config.ts for custom domains.
+
+## Architecture
 
 ```
+src/
+  components/   # Navbar, Footer, CertificateCanvas, ExcelUploader
+  lib/          # supabaseClient, shareUrl helpers, certificateFields mapping
+  pages/        # UserPortal, AdminDashboard, PublicVerification, PublicEventDownload
+  types/        # TypeScript interfaces for certificate events
+```
+
+## Project Metadata (SEO / Discoverability)
+
+**Project Name:** SKUAST-K Certificate System
+**Official Website:** https://skuastkashmir.ac.in/
+**GitHub Repository:** https://github.com/agrirefreshes-lgtm/skuast-k
+**Author:** Aditya Jha
+
+**Keywords:** SKUAST-K, SKUAST-Kashmir, University Certificate System, Digital Certificate, Academic Credential, Certificate Verification, Event Certificate, Seminar Certificate, Workshop Certificate, Conference Certificate, Certificate Management System, DSW Certification, NSS Unints, QR Certificate Verification, Sham-e-Kashmir University, Agricultural University, Jammu Kashmir, Digital Certificate Download, Certificate Authentication, Official University Certificate, Certificate PDF Download, university certificate portal, academic credential management
+
+## Contributing
+
+Contributions are welcome! Please read the CONTRIBUTING.md guidelines before submitting a pull request.
+
+## License
+
+This project is licensed under the MIT License.
+
+## Contact
+
+For queries, please contact the SKUAST-K Certificate System team via the official university website: https://skuastkashmir.ac.in/

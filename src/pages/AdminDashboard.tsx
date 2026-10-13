@@ -583,7 +583,8 @@ export const AdminDashboard: React.FC = () => {
   const handleExcelParsed = async (
     records: Record<string, string>[],
     columns: UploadedColumnDefinition[],
-    fileName: string
+    fileName: string,
+    replaceExisting: boolean = false  // NEW: Handle replace/merge option
   ) => {
     const userId = await verifyLiveSession();
     if (!userId || !currentEvent) return;
@@ -596,7 +597,7 @@ export const AdminDashboard: React.FC = () => {
       count: records.length,
     };
 
-    const updatedFields = reconcileDynamicFields(currentEvent.fields, columns);
+    const updatedFields = reconcileDynamicFields(currentEvent.fields, columns, replaceExisting);
 
     const dbCertsToInsert: any[] = [];
     const localNewCerts: IssuedCertificate[] = [];

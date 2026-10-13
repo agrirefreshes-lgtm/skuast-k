@@ -8,14 +8,25 @@ interface Props {
   onParsed: (
     records: Record<string, string>[],
     columns: UploadedColumnDefinition[],
-    fileName: string
+    fileName: string,
+    replaceExisting: boolean  // NEW: Whether to replace or merge fields
   ) => void;
 }
 
 export const ExcelUploader: React.FC<Props> = ({ onParsed }) => {
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // NEW: Ask user whether to replace existing fields or merge
+    const replaceExisting = await new Promise<boolean>((resolve) => {
+      const choice = confirm(
+        'Replace existing fields with new Excel columns?\n\n' +
+        'OK = REPLACE (start fresh with only new Excel columns)\n' +
+        'Cancel = MERGE (keep existing fields + add new ones)'
+      );
+      resolve(choice);
+    });
 
     const isCSV = file.name.toLowerCase().endsWith('.csv');
 
@@ -32,7 +43,7 @@ export const ExcelUploader: React.FC<Props> = ({ onParsed }) => {
           alert('CSV khali hai ya koi row nahi mili!');
           return;
         }
-        onParsed(records, columns, file.name);
+        onParsed(records, columns, file.name, replaceExisting);
         e.target.value = '';
       };
       reader.readAsText(file, 'UTF-8');
@@ -68,7 +79,7 @@ export const ExcelUploader: React.FC<Props> = ({ onParsed }) => {
         return;
       }
 
-      onParsed(records, columns, file.name);
+      onParsed(records, columns, file.name, replaceExisting);
       e.target.value = '';
     };
     reader.readAsBinaryString(file);

@@ -108,7 +108,10 @@ test('new fields remain source references and resolve independently for every ro
   const row2 = { Name: 'Kashmir', District: 'Kashmir', Course: 'Horticulture' };
   assert.equal(fields[1].label, 'District');
   assert.equal(fields[1].sourceKey, 'District');
-  assert.equal(fields[1].isPlaced, false);
+  // Newly fetched fields are placed immediately so admins see them on the canvas
+  // without extra drag-in steps (FIX: fields used to be hidden until manually placed).
+  assert.equal(fields[1].isPlaced, true);
+  assert.equal(isFieldPlaced(fields[1]), true);
   assert.equal(resolveFieldValue(row1, fields[1]), 'Jammu');
   assert.equal(resolveFieldValue(row2, fields[1]), 'Kashmir');
   assert.equal(fields[1].label, 'District');

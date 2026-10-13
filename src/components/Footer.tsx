@@ -43,7 +43,7 @@ export const Footer: React.FC = () => {
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed max-w-lg">
-              Official Multi-Event Digital Certification, Authentication & Tamper-Proof Verification Infrastructure. Powered by cloud-backed encrypted ledgers for conferences, seminars, and academic workshops.
+              Official Multi-Event Digital Certification Designed For DSW Under NSS Unints, Use For Authentication & Tamper-Proof Verification Infrastructure. Powered by cloud-backed encrypted ledgers for conferences, seminars, and academic workshops.
             </p>
 
             <div className="pt-2">
@@ -98,7 +98,7 @@ export const Footer: React.FC = () => {
                 B.Tech Agricultural Engineering Student
               </p>
               <span className="inline-block text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800 mt-1">
-                SKUAST-K Shalimar Campus
+                SKUAST-K Shalimar Campus Specially Design For Dsw Under NSS Units
               </span>
             </div>
           </div>

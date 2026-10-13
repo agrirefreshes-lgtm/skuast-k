@@ -9,7 +9,8 @@ import {
 } from '../lib/certificateFields';
 import {
   Bold, Italic, AlignLeft, AlignCenter, AlignRight, Palette, Type,
-  X, Lock, Unlock, ZoomIn, ZoomOut, Download, Loader2, Eye, EyeOff
+  X, Lock, Unlock, ZoomIn, ZoomOut, Download, Loader2, Eye, EyeOff,
+  Undo2, Redo2, Copy, Grid3x3, Save, CheckCircle2, Trash2
 } from 'lucide-react';
 
 interface Props {
@@ -29,12 +30,29 @@ const CERT_FONTS = [
   { label: 'Courier Monospace', value: '"Courier New", Courier, monospace' },
 ];
 
+// Undo/Redo history management
+interface HistoryState {
+  event: EventItem;
+  timestamp: number;
+}
+
 export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent, readOnly = false }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedElementKey, setSelectedElementKey] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  
+  // NEW: Undo/Redo state
+  const [history, setHistory] = useState<HistoryState[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  
+  // NEW: Alignment guides state
+  const [showGrid, setShowGrid] = useState<boolean>(false);
+  const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
+  
+  // NEW: Save indicator state
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
 
   const getQrVerificationUrl = () => getVerifyUrl(cert.certificate_no);
   const selectedField = selectedElementKey ? (event.fields.find(f => f.key === selectedElementKey) || null) : null;
@@ -49,21 +67,179 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
     return !!event.fields.find(f => f.key === key)?.isLocked;
   };
 
+  // ---------------- UNDO/REDO HELPERS ----------------
+  const pushToHistory = useCallback((ev: EventItem) => {
+    const newState: HistoryState = { event: ev, timestamp: Date.now() };
+    setHistory(prev => {
+      const trimmed = prev.slice(0, historyIndex + 1);
+      const newHistory = [...trimmed, newState].slice(-50);
+      setHistoryIndex(newHistory.length - 1);
+      return newHistory;
+    });
+    setSaveStatus('unsaved');
+    setTimeout(() => setSaveStatus('saved'), 600);
+  }, [historyIndex]);
+
+  const handleUndo = useCallback(() => {
+    if (historyIndex <= 0 || !onUpdateEvent) return;
+    const prevIndex = historyIndex - 1;
+    const prevState = history[prevIndex];
+    if (prevState) {
+      setHistoryIndex(prevIndex);
+      onUpdateEvent(prevState.event);
+      setSaveStatus('saving');
+      setTimeout(() => setSaveStatus('saved'), 400);
+    }
+  }, [historyIndex, history, onUpdateEvent]);
+
+  const handleRedo = useCallback(() => {
+    if (historyIndex >= history.length - 1 || !onUpdateEvent) return;
+    const nextIndex = historyIndex + 1;
+    const nextState = history[nextIndex];
+    if (nextState) {
+      setHistoryIndex(nextIndex);
+      onUpdateEvent(nextState.event);
+      setSaveStatus('saving');
+      setTimeout(() => setSaveStatus('saved'), 400);
+    }
+  }, [historyIndex, history, onUpdateEvent]);
+
+  const canUndo = historyIndex > 0;
+  const canRedo = historyIndex < history.length - 1;
+
+  // Initialize history
+  useEffect(() => {
+    if (history.length === 0) {
+      setHistory([{ event, timestamp: Date.now() }]);
+      setHistoryIndex(0);
+    }
+  }, []);
+
+  // Track changes
+  useEffect(() => {
+    const lastState = history[historyIndex];
+    if (lastState && lastState.event !== event && !readOnly) {
+      pushToHistory(event);
+    }
+  }, [event, historyIndex, history, readOnly, pushToHistory]);
+
+  // ---------------- FIELD MOVEMENT ----------------
+  const moveSelectedElement = (dx: number, dy: number) => {
+    if (!selectedElementKey || !onUpdateEvent || isLockedKey(selectedElementKey)) return;
+    const clamp = (v: number) => Math.max(0, Math.min(100, Number(v.toFixed(2))));
+    
+    if (selectedElementKey === '__cert_no__') {
+      onUpdateEvent({
+        ...event,
+        certNoConfig: { ...event.certNoConfig, x: clamp(event.certNoConfig.x + dx), y: clamp(event.certNoConfig.y + dy) }
+      });
+    } else if (selectedElementKey === '__qr_code__') {
+      onUpdateEvent({
+        ...event,
+        qrConfig: { ...event.qrConfig, x: clamp(event.qrConfig.x + dx), y: clamp(event.qrConfig.y + dy) }
+      });
+    } else {
+      const updatedFields = event.fields.map(f =>
+        f.key === selectedElementKey ? { ...f, x: clamp(f.x + dx), y: clamp(f.y + dy) } : f
+      );
+      onUpdateEvent({ ...event, fields: updatedFields });
+    }
+  };
+
+  // ---------------- FIELD DUPLICATION ----------------
+  const handleDuplicateField = () => {
+    if (!selectedElementKey || !onUpdateEvent) return;
+    if (selectedElementKey === '__cert_no__' || selectedElementKey === '__qr_code__') return;
+
+    const sourceField = event.fields.find(f => f.key === selectedElementKey);
+    if (!sourceField) return;
+
+    const newKey = `${sourceField.key}_copy_${Date.now()}`;
+    const duplicatedField: DynamicFieldDef = {
+      ...sourceField,
+      key: newKey,
+      label: `${sourceField.label} (Copy)`,
+      x: Math.min(100, sourceField.x + 5),
+      y: Math.min(100, sourceField.y + 5),
+      isLocked: false
+    };
+
+    onUpdateEvent({ ...event, fields: [...event.fields, duplicatedField] });
+    setSelectedElementKey(newKey);
+  };
+
+  // ---------------- FIELD DELETION ----------------
+  const handleDeleteField = () => {
+    if (!selectedElementKey || !onUpdateEvent) return;
+    if (selectedElementKey === '__cert_no__' || selectedElementKey === '__qr_code__') return;
+
+    const fieldToDelete = event.fields.find(f => f.key === selectedElementKey);
+    if (!fieldToDelete || fieldToDelete.isLocked) return;
+    if (!confirm(`Delete "${fieldToDelete.label}" field?`)) return;
+
+    onUpdateEvent({ ...event, fields: event.fields.filter(f => f.key !== selectedElementKey) });
+    setSelectedElementKey(null);
+  };
+
+  // ---------------- KEYBOARD SHORTCUTS ----------------
+  useEffect(() => {
+    if (readOnly) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
+      if (!selectedElementKey || !onUpdateEvent) return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); handleUndo(); return; }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); handleRedo(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'd') { e.preventDefault(); handleDuplicateField(); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        if (selectedElementKey !== '__cert_no__' && selectedElementKey !== '__qr_code__') handleDeleteField();
+        return;
+      }
+
+      const step = e.shiftKey ? 0.1 : 1;
+      let dx = 0, dy = 0;
+      if (e.key === 'ArrowLeft') dx = -step;
+      else if (e.key === 'ArrowRight') dx = step;
+      else if (e.key === 'ArrowUp') dy = -step;
+      else if (e.key === 'ArrowDown') dy = step;
+      else return;
+
+      e.preventDefault();
+      moveSelectedElement(dx, dy);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedElementKey, onUpdateEvent, event, handleUndo, handleRedo]);
+
+  // ---------------- GRID SNAP ----------------
+  const snapToGridValue = (value: number, gridSize: number = 5): number => {
+    if (!snapToGrid) return value;
+    return Math.round(value / gridSize) * gridSize;
+  };
+
   const handleMouseDown = (key: string, e: React.MouseEvent) => {
     if (readOnly) return;
-    e.preventDefault();
+    // Don't prevent default for text selection - only for drag
+    // This allows admin to select text in the inspector/preview
     e.stopPropagation();
-    // Locked layer select ho sakta hai (inspector dikhe) par drag nahi hoga.
     setSelectedElementKey(key);
     if (isLockedKey(key)) return;
+    // Only prevent default when starting drag (not on plain click)
+    e.preventDefault();
     setDraggingKey(key);
   };
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!draggingKey || !containerRef.current || !onUpdateEvent) return;
     const rect = containerRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(100, Number((((e.clientX - rect.left) / rect.width) * 100).toFixed(2))));
-    const y = Math.max(0, Math.min(100, Number((((e.clientY - rect.top) / rect.height) * 100).toFixed(2))));
+    let x = Math.max(0, Math.min(100, Number((((e.clientX - rect.left) / rect.width) * 100).toFixed(2))));
+    let y = Math.max(0, Math.min(100, Number((((e.clientY - rect.top) / rect.height) * 100).toFixed(2))));
+    
+    // Apply grid snapping
+    x = snapToGridValue(x);
+    y = snapToGridValue(y);
+
     if (draggingKey === '__cert_no__') {
       onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x, y } });
     } else if (draggingKey === '__qr_code__') {
@@ -72,7 +248,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       const updatedFields = event.fields.map(f => f.key === draggingKey ? { ...f, x, y } : f);
       onUpdateEvent({ ...event, fields: updatedFields });
     }
-  }, [draggingKey, event, onUpdateEvent]);
+  }, [draggingKey, event, onUpdateEvent, snapToGrid]);
 
   const handleMouseUp = useCallback(() => { setDraggingKey(null); }, []);
 
@@ -225,7 +401,101 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   };
 
   return (
-    <div className="relative w-full select-none">
+    <div className="relative w-full">  {/* Removed select-none - only canvas has it */}
+      {/* TOOLBAR: Undo/Redo, Save Status, Grid Controls */}
+      {!readOnly && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-slate-50 to-gray-50 border border-slate-200 rounded-xl px-4 py-2.5 shadow-sm">
+          {/* Left: Undo/Redo + Save Status */}
+          <div className="flex items-center gap-3">
+            {/* Undo/Redo Buttons */}
+            <div className="flex items-center gap-1 bg-white rounded-lg border border-slate-200 px-1.5 py-1 shadow-sm">
+              <button
+                onClick={handleUndo}
+                disabled={!canUndo}
+                className="p-1.5 rounded-md hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 cursor-pointer transition"
+                title="Undo (Ctrl+Z)"
+              >
+                <Undo2 size={15} />
+              </button>
+              <div className="w-px h-4 bg-slate-200" />
+              <button
+                onClick={handleRedo}
+                disabled={!canRedo}
+                className="p-1.5 rounded-md hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 cursor-pointer transition"
+                title="Redo (Ctrl+Shift+Z)"
+              >
+                <Redo2 size={15} />
+              </button>
+            </div>
+
+            {/* Save Status Indicator */}
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${
+              saveStatus === 'saved' 
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                : saveStatus === 'saving'
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                : 'bg-blue-50 text-blue-700 border-blue-200'
+            }`}>
+              {saveStatus === 'saved' ? (
+                <><CheckCircle2 size={13} /> Saved</>
+              ) : saveStatus === 'saving' ? (
+                <><Save size={13} className="animate-pulse" /> Saving...</>
+              ) : (
+                <><Save size={13} /> Unsaved changes</>
+              )}
+            </div>
+
+            {/* History Counter */}
+            <span className="text-[10px] text-slate-500 font-mono bg-white px-2 py-1 rounded-md border border-slate-200">
+              {historyIndex + 1}/{history.length}
+            </span>
+          </div>
+
+          {/* Right: Grid Controls + Keyboard Shortcuts Help */}
+          <div className="flex items-center gap-2">
+            {/* Grid Toggle */}
+            <button
+              onClick={() => setShowGrid(!showGrid)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                showGrid ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+              title="Show alignment grid"
+            >
+              <Grid3x3 size={13} /> Grid
+            </button>
+
+            {/* Snap to Grid Toggle */}
+            <button
+              onClick={() => setSnapToGrid(!snapToGrid)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                snapToGrid ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+              title="Snap to grid (5% increments)"
+            >
+              <Grid3x3 size={13} /> Snap
+            </button>
+
+            {/* Keyboard Shortcuts Help */}
+            <div className="group relative">
+              <button className="flex items-center justify-center w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-500 hover:bg-slate-50 cursor-pointer text-xs font-bold">
+                ?
+              </button>
+              <div className="absolute right-0 top-full mt-2 w-72 bg-slate-900 text-white text-[11px] rounded-xl p-4 shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                <p className="font-bold mb-2 text-amber-400">⌨️ Keyboard Shortcuts</p>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between"><span>Undo</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Ctrl+Z</kbd></div>
+                  <div className="flex justify-between"><span>Redo</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Ctrl+Shift+Z</kbd></div>
+                  <div className="flex justify-between"><span>Duplicate field</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Ctrl+D</kbd></div>
+                  <div className="flex justify-between"><span>Delete field</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Del</kbd></div>
+                  <div className="flex justify-between"><span>Move (1%)</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">↑↓←→</kbd></div>
+                  <div className="flex justify-between"><span>Move (0.1%)</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Shift+↑↓</kbd></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Live Edit Preview — selected layer ka actual text, bara + proper distance par */}
       {!readOnly && selectedElementKey && (
         <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3">
@@ -378,7 +648,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
             </div>
           )}
 
-          {/* Lock + Visibility */}
+          {/* Lock + Visibility + Duplicate */}
           <div className="border-t border-gray-100 pt-1.5 flex items-center gap-1">
             <button
               onClick={() => handleLockToggle(selectedElementKey!)}
@@ -394,6 +664,26 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
             >
               {(selectedElementKey === '__cert_no__' ? event.certNoConfig.visible : selectedElementKey === '__qr_code__' ? event.qrConfig.visible : (selectedField?.visible ?? true)) ? <Eye size={14} /> : <EyeOff size={14} />}
             </button>
+            {/* NEW: Duplicate Button (only for dynamic fields) */}
+            {selectedElementKey !== '__cert_no__' && selectedElementKey !== '__qr_code__' && (
+              <button
+                onClick={handleDuplicateField}
+                className="p-1.5 rounded-lg text-slate-600 hover:bg-emerald-100 hover:text-emerald-700 cursor-pointer"
+                title="Duplicate field (Ctrl+D)"
+              >
+                <Copy size={14} />
+              </button>
+            )}
+            {/* NEW: Delete Button (only for dynamic fields) */}
+            {selectedElementKey !== '__cert_no__' && selectedElementKey !== '__qr_code__' && !selectedField?.isLocked && (
+              <button
+                onClick={handleDeleteField}
+                className="p-1.5 rounded-lg text-slate-600 hover:bg-rose-100 hover:text-rose-700 cursor-pointer"
+                title="Delete field (Del)"
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
             <span className="text-[10px] ml-auto text-slate-400">Drag = move</span>
           </div>
         </div>
@@ -417,9 +707,27 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               e.stopPropagation();
               placeFieldFromDrop(key, e.clientX, e.clientY);
             }}
-            className="relative bg-white shadow-lg overflow-hidden"
+            className="relative bg-white shadow-lg overflow-hidden select-none"
             style={{ width: '1123px', maxWidth: '100%', aspectRatio: '1.414 / 1' }}
           >
+            {/* Added select-none only to canvas - inspector panel allows text selection */}
+            {/* NEW: Grid Overlay for alignment */}
+            {showGrid && !readOnly && (
+              <div className="absolute inset-0 z-10 pointer-events-none" style={{
+                backgroundImage: `
+                  linear-gradient(to right, rgba(59, 130, 246, 0.3) 1px, transparent 1px),
+                  linear-gradient(to bottom, rgba(59, 130, 246, 0.3) 1px, transparent 1px)
+                `,
+                backgroundSize: '5% 5%'
+              }} />
+            )}
+            {/* NEW: Center alignment guides */}
+            {showGrid && !readOnly && (
+              <>
+                <div className="absolute inset-y-0 left-1/2 w-px bg-rose-400/50 z-10 pointer-events-none" />
+                <div className="absolute inset-x-0 top-1/2 h-px bg-rose-400/50 z-10 pointer-events-none" />
+              </>
+            )}
             {event.templateUrl ? (
               <img src={event.templateUrl} alt="Certificate template" className="absolute inset-0 w-full h-full object-fill" draggable={false} crossOrigin="anonymous" />
             ) : (

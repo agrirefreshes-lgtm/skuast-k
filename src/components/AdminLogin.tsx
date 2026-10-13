@@ -30,8 +30,8 @@ export const AdminLogin: React.FC<Props> = ({ onAuthenticated }) => {
       }
 
       if (data?.session) {
-        // Safe backend token stored via Supabase Auth client automatically
-        sessionStorage.setItem('skuastk_admin_auth', 'true');
+        // Session token is securely stored by Supabase Auth client (httpOnly cookie)
+        // No need for client-side session storage for security
         onAuthenticated(data.session);
       }
     } catch (err: any) {
