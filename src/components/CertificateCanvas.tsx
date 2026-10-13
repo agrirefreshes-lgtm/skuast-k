@@ -765,7 +765,11 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                     textAlign: field.align, color: isEmpty ? '#94a3b8' : field.color, fontFamily: field.fontFamily,
                     fontSize: `${field.fontSize}px`, fontWeight: field.isBold ? 700 : 400,
                     fontStyle: field.isItalic ? 'italic' : 'normal',
-                    lineHeight: field.lineHeight, letterSpacing: `${field.letterSpacing ?? 0}px`,
+                    // Single-line fields hug the text tightly (no extra leading that would
+                    // make the selection box taller than the glyphs); multi-line fields keep
+                    // their configured line spacing. Applied in every mode so editor == export.
+                    lineHeight: (field.maxLines ?? 1) > 1 ? field.lineHeight : 1.2,
+                    letterSpacing: `${field.letterSpacing ?? 0}px`,
                     wordBreak: 'break-word', overflow: 'hidden',
                     WebkitLineClamp: field.maxLines ?? 1,
                     WebkitBoxOrient: 'vertical' as const, userSelect: 'none',
