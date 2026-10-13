@@ -172,7 +172,7 @@ export const UserPortal: React.FC = () => {
 
       if (certsErr) throw certsErr;
       if (!certsData || certsData.length === 0) {
-        throw new Error('Is event ke liye abhi koi certificates upload nahi kiye gaye hain.');
+        throw new Error('No certificates have been published for this event yet. Please check back later or contact the event coordinator.');
       }
 
       // 3. Robust Excel Data Key-Insensitive Matching
@@ -203,7 +203,7 @@ export const UserPortal: React.FC = () => {
       });
 
       if (!matchedRow) {
-        throw new Error('Aapke daale gaye details se koi certificate match nahi hua. Kripya details check karein.');
+        throw new Error('No certificate matched these details. Please check the spelling and try again, or contact the event coordinator for help.');
       }
 
       const formattedCert: IssuedCertificate = {
@@ -258,7 +258,7 @@ export const UserPortal: React.FC = () => {
               Participant Self-Service Portal
             </span>
             <h2 className="text-2xl font-bold text-gray-900 pt-2">Download Your Verified Certificate</h2>
-            <p className="text-xs text-gray-500">Apna event select karein aur verification details enter karein</p>
+            <p className="text-xs text-gray-500">Select your event and enter your verification details exactly as registered</p>
           </div>
 
           {loadingEvents ? (
@@ -353,7 +353,7 @@ export const UserPortal: React.FC = () => {
               {!isDownloadsActive && (
                 <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-center gap-2">
                   <PauseCircle size={16} className="text-amber-600 shrink-0" />
-                  <span>Is event ke certificates download ko administrator dwara abhi temporary pause kiya gaya hai.</span>
+                  <span>Downloads for this event are temporarily paused by the administrator. Please check back shortly.</span>
                 </div>
               )}
 
@@ -405,7 +405,7 @@ export const UserPortal: React.FC = () => {
           {errorMsg && (
             <div className="max-w-xl mx-auto p-4 rounded-2xl bg-rose-50 border border-rose-200 text-center space-y-1">
               <div className="flex items-center justify-center gap-1.5 text-rose-700 font-bold text-xs">
-                <AlertCircle size={16} /> Certificate Not Found / Access Blocked
+                <AlertCircle size={16} /> Certificate Not Found
               </div>
               <p className="text-[11px] text-rose-600">{errorMsg}</p>
             </div>
@@ -419,7 +419,7 @@ export const UserPortal: React.FC = () => {
               <div className="flex items-center gap-2">
                 <FileCheck size={20} className="text-emerald-700" />
                 <div>
-                  <h3 className="text-sm font-bold text-gray-900">Certificate Identity Authenticated!</h3>
+                  <h3 className="text-sm font-bold text-gray-900">Certificate Verified</h3>
                   <p className="text-xs font-mono text-emerald-800 font-semibold">{activeCert.certificate_no}</p>
                 </div>
               </div>

@@ -307,7 +307,7 @@ export const PublicVerification: React.FC = () => {
         {loading ? (
           <div className="py-8 flex flex-col items-center justify-center gap-2">
             <Loader2 className="animate-spin text-emerald-800" size={28} />
-            <p className="text-xs text-gray-500">Checking central tamper-proof records...</p>
+            <p className="text-xs text-gray-500">Verifying against the university records…</p>
           </div>
         ) : cert ? (
           <div className="space-y-4 pt-2 border-t">
@@ -358,9 +358,9 @@ export const PublicVerification: React.FC = () => {
         ) : hasSearched ? (
           <div className="text-center py-6 space-y-2 border-t">
             <XCircle size={36} className="text-rose-600 mx-auto" />
-            <h3 className="text-sm font-bold text-gray-900">Data Not Matched</h3>
+            <h3 className="text-sm font-bold text-gray-900">No Matching Record</h3>
             <p className="text-xs text-gray-500 max-w-xs mx-auto">
-              No official record found for certificate "{inputCertNo}". Please verify and re-scan.
+              No official record found for “{inputCertNo}”. Please check the number and try again.
             </p>
             {errorMsg && (
               <p className="text-[11px] text-rose-500 font-mono mt-1">DB: {errorMsg}</p>

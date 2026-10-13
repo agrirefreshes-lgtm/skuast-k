@@ -6,6 +6,8 @@ import { CertificateCanvas } from '../components/CertificateCanvas';
 import { AdminLogin } from '../components/AdminLogin';
 import { supabase } from '../lib/supabaseClient';
 import { getEventUrl } from '../lib/shareUrl';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 import {
   getFieldDisplayLabel,
   getFieldReference,
@@ -63,14 +65,16 @@ export const AdminDashboard: React.FC = () => {
   const [newAdminPassword, setNewAdminPassword] = useState('');
   const [newAdminDept, setNewAdminDept] = useState('');
   const [creatingAdmin, setCreatingAdmin] = useState(false);
-  const [formMsg, setFormMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const toast = useToast();
+  const confirm = useConfirm();
+
 
   const verifyLiveSession = useCallback(async (): Promise<string | null> => {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error || !session?.user) {
       sessionStorage.removeItem('skuastk_admin_auth');
       setIsAuthenticated(false);
-      alert('Security session expired or invalid. Please login again.');
+      toast.error('Security session expired', 'Please sign in again to continue.');
       return null;
     }
     return session.user.id;
@@ -183,7 +187,7 @@ export const AdminDashboard: React.FC = () => {
       console.log('loadProfile: data loaded successfully');
     } catch (err: any) {
       console.error('loadProfile ERROR:', err);
-      alert('Failed to load admin profile. Please try again.\nError: ' + (err?.message || String(err)));
+      toast.error('Could not load admin profile', err?.message || 'Please try again.');
     } finally {
       // Always clear loading so the console can render (never leave the UI stuck).
       setLoading(false);
@@ -217,7 +221,7 @@ export const AdminDashboard: React.FC = () => {
         sessionStorage.removeItem('skuastk_admin_auth');
         setIsAuthenticated(false);
         setLoading(false);
-        alert('Session check failed. Please login again.\nError: ' + (err?.message || String(err)));
+        toast.error('Session check failed', (err?.message || String(err)) + ' Please sign in again.');
       }
     };
 
@@ -250,7 +254,7 @@ export const AdminDashboard: React.FC = () => {
         const { data: { session: fetchedSession }, error } = await supabase.auth.getSession();
         if (error || !fetchedSession?.user) {
           setLoading(false);
-          alert('Session verification failed. Please try again.');
+          toast.error('Session verification failed', 'Please try again.');
           return;
         }
         sessionToUse = fetchedSession;
@@ -267,7 +271,7 @@ export const AdminDashboard: React.FC = () => {
     } catch (err: any) {
       setLoading(false);
       console.error('LOGIN ERROR:', err);
-      alert('LOGIN FAILED: ' + (err?.message || String(err)) + '\nPlease try again.');
+      toast.error('Sign-in failed', (err?.message || String(err)) + ' Please try again.');
     }
   };
 
@@ -318,7 +322,6 @@ export const AdminDashboard: React.FC = () => {
   // Authenticated + profile loaded -> render dashboard
   const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFormMsg(null);
     setCreatingAdmin(true);
 
     try {
@@ -330,13 +333,13 @@ export const AdminDashboard: React.FC = () => {
 
       if (error) throw error;
 
-      setFormMsg({ type: 'success', text: `Department Admin created successfully for ${newAdminEmail}!` });
+      toast.success('Department admin created', `Access granted to ${newAdminEmail}. They can now sign in from the Admin tab.`);
       setNewAdminEmail('');
       setNewAdminPassword('');
       setNewAdminDept('');
       await loadAdminDirectory();
     } catch (err: any) {
-      setFormMsg({ type: 'error', text: err.message || 'Failed to create department admin.' });
+      toast.error('Could not create department admin', err.message || 'Please check the details and try again.');
     } finally {
       setCreatingAdmin(false);
     }
@@ -396,10 +399,11 @@ export const AdminDashboard: React.FC = () => {
     });
 
     if (error) {
-      alert('Event creation failed: ' + error.message);
+      toast.error('Event could not be created', error.message);
     } else {
       setEvents([newEv, ...events]);
       setSelectedEventId(newEv.id);
+      toast.success('Event created', `"${newEv.name}" is ready for template and data setup.`);
     }
   };
 
@@ -407,13 +411,19 @@ export const AdminDashboard: React.FC = () => {
     const userId = await verifyLiveSession();
     if (!userId) return;
 
-    if (!confirm(`Kya aap "${eventName}" event ko delete karna chahte hain?`)) return;
+    const remove = await confirm({
+      title: 'Delete this event?',
+      message: `"${eventName}" and all of its certificates will be permanently removed. This cannot be undone.`,
+      confirmText: 'Delete event',
+      danger: true,
+    });
+    if (!remove) return;
 
     await supabase.from('certificates').delete().eq('event_id', eventId);
     const { error } = await supabase.from('events').delete().eq('id', eventId);
 
     if (error) {
-      alert('Event delete failed: ' + error.message);
+      toast.error('Event could not be deleted', error.message);
       return;
     }
 
@@ -425,6 +435,7 @@ export const AdminDashboard: React.FC = () => {
       setSelectedEventId('');
       setCertificates([]);
     }
+    toast.success('Event deleted', `"${eventName}" and its certificates were removed.`);
   };
 
   const handleToggleDownloadAccess = async (eventId: string, currentStatus: boolean) => {
@@ -435,11 +446,15 @@ export const AdminDashboard: React.FC = () => {
       .eq('id', eventId);
 
     if (error) {
-      alert('Failed to update download status: ' + error.message);
+      toast.error('Download access could not be updated', error.message);
       return;
     }
 
     setEvents(events.map(ev => ev.id === eventId ? { ...ev, isDownloadEnabled: newStatus } : ev));
+    toast.success(
+      newStatus ? 'Downloads enabled' : 'Downloads paused',
+      newStatus ? 'Candidates can now download their certificates.' : 'Candidates will see a paused notice until downloads resume.'
+    );
   };
 
   const handlePublishToggle = async (ev: EventItem) => {
@@ -449,19 +464,35 @@ export const AdminDashboard: React.FC = () => {
     const willPublish = !(ev.isPublished ?? false);
     if (willPublish) {
       if (certificates.length === 0) {
-        alert('Pahle Excel/CSV upload karke certificates generate karein, tabhi publish karein.');
+        toast.warning('No certificates yet', 'Upload the Excel/CSV batch first, then publish the event.');
         return;
       }
       if (!ev.templateUrl || ev.templateUrl.includes('dummyimage')) {
-        if (!confirm('Certificate format abhi upload nahi hua. Bina format ke publish karna hai?')) return;
+        const noTemplate = await confirm({
+          title: 'No template uploaded',
+          message: 'Publish without a certificate format? Candidates will see a blank design.',
+          confirmText: 'Publish anyway',
+        });
+        if (!noTemplate) return;
       }
       if (!ev.primaryAuthField || !ev.securityAuthField || ev.primaryAuthField === ev.securityAuthField) {
-        alert('Publish se pahle Name field aur alag Security Question field select karein.');
+        toast.warning('Set verification fields first', 'Choose the Name field and a different Security field before publishing.');
         return;
       }
-      if (!confirm(`"${ev.name}" ko PUBLICLY PUBLISH karna hai? Users ab certificates download kar payenge.`)) return;
+      const goLive = await confirm({
+        title: 'Publish this event?',
+        message: `"${ev.name}" will go live — candidates can find and download their certificates, and the share link activates.`,
+        confirmText: 'Publish event',
+      });
+      if (!goLive) return;
     } else {
-      if (!confirm(`"${ev.name}" ko UNPUBLISH karna hai? Users download nahi kar payenge.`)) return;
+      const goOffline = await confirm({
+        title: 'Unpublish this event?',
+        message: `"${ev.name}" will go offline — candidates will not be able to download until it is published again.`,
+        confirmText: 'Unpublish',
+        danger: true,
+      });
+      if (!goOffline) return;
     }
 
     const updates = willPublish
@@ -476,7 +507,7 @@ export const AdminDashboard: React.FC = () => {
 
     const { error } = await supabase.from('events').update(updates).eq('id', ev.id);
     if (error) {
-      alert('Publish update failed: ' + error.message);
+      toast.error('Publish update failed', error.message);
       return;
     }
 
@@ -490,7 +521,10 @@ export const AdminDashboard: React.FC = () => {
           }
         : row
     ));
-    alert(willPublish ? 'Event PUBLISHED. Share link user side live ho gayi.' : 'Event UNPUBLISHED.');
+    toast.success(
+      willPublish ? 'Event is live' : 'Event unpublished',
+      willPublish ? `"${ev.name}" is now visible to candidates — the share link is active.` : `"${ev.name}" is now hidden. Candidates cannot download until it is published again.`
+    );
   };
 
   const handleToggleCanvasLock = async (ev: EventItem) => {
@@ -519,8 +553,12 @@ export const AdminDashboard: React.FC = () => {
       }).eq('id', ev.id);
       if (error) throw error;
       setEvents(events.map((row) => (row.id === ev.id ? lockedEvent : row)));
+      toast.success(
+        lockAll ? 'Layout locked' : 'Layout unlocked',
+        lockAll ? 'All certificate elements are now locked in position.' : 'Elements can be repositioned and edited again.'
+      );
     } catch (err: any) {
-      alert('Lock update failed: ' + (err?.message || 'Unknown error'));
+      toast.error('Layout lock failed', err?.message || 'Unknown error');
     }
   };
 
@@ -528,15 +566,22 @@ export const AdminDashboard: React.FC = () => {
     const userId = await verifyLiveSession();
     if (!userId) return;
 
-    if (!confirm(`Are you sure you want to delete certificate record ${certNo}?`)) return;
+    const remove = await confirm({
+      title: 'Delete this certificate?',
+      message: `Certificate ${certNo} will be permanently removed. The candidate will no longer be able to download it. This cannot be undone.`,
+      confirmText: 'Delete certificate',
+      danger: true,
+    });
+    if (!remove) return;
 
     const { error } = await supabase.from('certificates').delete().eq('certificate_no', certNo);
     if (error) {
-      alert('Failed to delete certificate: ' + error.message);
+      toast.error('Certificate could not be deleted', error.message);
       return;
     }
 
     setCertificates(prev => prev.filter(c => c.certificate_no !== certNo));
+    toast.success('Certificate deleted', `${certNo} was removed from the records.`);
   };
 
   const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -555,7 +600,7 @@ export const AdminDashboard: React.FC = () => {
       .upload(filePath, file, { upsert: true });
 
     if (uploadError) {
-      alert('Image upload failed: ' + uploadError.message);
+      toast.error('Template upload failed', uploadError.message || 'The image could not be uploaded. Please try again.');
       setUploadingImage(false);
       return;
     }
@@ -570,6 +615,7 @@ export const AdminDashboard: React.FC = () => {
     const updated = { ...currentEvent, templateUrl: publicUrl };
     setEvents(events.map((ev) => (ev.id === currentEvent.id ? updated : ev)));
     setUploadingImage(false);
+    toast.success('Template uploaded', 'The certificate format is saved to the cloud. Fields can now be positioned on it.');
   };
 
   const handleUpdateEvent = async (updated: EventItem) => {
@@ -693,9 +739,9 @@ export const AdminDashboard: React.FC = () => {
 
     if (certError) {
       if ((certError as any)?.code === '23505') {
-        alert('Duplicate certificate numbers mile. Dobara try karein (unique 5-digit numbers auto-regenerate honge).');
+        toast.error('Duplicate certificate numbers', 'Some numbers already exist. Re-upload to auto-generate fresh unique numbers.');
       } else {
-        alert('Certificates upload error: ' + certError.message);
+        toast.error('Certificates upload failed', certError.message);
       }
       return;
     }
@@ -711,8 +757,9 @@ export const AdminDashboard: React.FC = () => {
     setCertificates([...certificates, ...localNewCerts]);
     setActiveCertIndex(0);
     setSelectedEventId(currentEvent.id);
-    alert(
-      `${records.length} Certificates Supabase Cloud me successfully save ho gaye!\nNo: ${inserted?.[0]?.certificate_no ?? ''} ...`
+    toast.success(
+      `${records.length} certificates saved`,
+      `Uploaded to the secure cloud. First certificate: ${inserted?.[0]?.certificate_no ?? '—'}`
     );
   };
 
@@ -720,7 +767,13 @@ export const AdminDashboard: React.FC = () => {
     const userId = await verifyLiveSession();
     if (!userId) return;
 
-    if (!confirm('Batch delete karein? Supabase se bhi saara data remove ho jayega.')) return;
+    const remove = await confirm({
+      title: 'Delete this batch?',
+      message: 'All certificates in this batch will be permanently removed from the database. This cannot be undone.',
+      confirmText: 'Delete batch',
+      danger: true,
+    });
+    if (!remove) return;
 
     await supabase.from('certificates').delete().eq('batch_id', batchId);
     const updatedBatches = currentEvent.batches.filter((b) => b.batchId !== batchId);
@@ -729,10 +782,14 @@ export const AdminDashboard: React.FC = () => {
     const updatedEvent = { ...currentEvent, batches: updatedBatches };
     setEvents(events.map((ev) => (ev.id === currentEvent.id ? updatedEvent : ev)));
     loadCertificates(currentEvent.id);
+    toast.success('Batch deleted', 'The batch and its certificates were removed.');
   };
 
   const handleExportEventExcel = () => {
-    if (certificates.length === 0) return alert('Records khali hain!');
+    if (certificates.length === 0) {
+      toast.warning('Nothing to export', 'Upload certificates before exporting the master list.');
+      return;
+    }
     const exportRows = certificates.map((c) => {
       const { certificate_no: _dup1, Certificate_No: _dup2, ...restData } = (c.data || {}) as Record<string, string>;
       void _dup1; void _dup2;
@@ -808,14 +865,6 @@ export const AdminDashboard: React.FC = () => {
                     <p className="text-[11px] text-gray-500">Authorize a new faculty/department incharge</p>
                   </div>
                 </div>
-
-                {formMsg && (
-                  <div className={`p-3 rounded-xl text-xs font-semibold ${
-                    formMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
-                  }`}>
-                    {formMsg.text}
-                  </div>
-                )}
 
                 <form onSubmit={handleCreateDepartmentAdmin} className="space-y-3">
                   <div>
@@ -1040,10 +1089,10 @@ export const AdminDashboard: React.FC = () => {
                       <ShieldCheck size={18} className={currentEvent.isPublished ? 'text-emerald-700' : 'text-slate-500'} />
                       <div>
                         <h3 className="text-xs font-bold text-gray-800">
-                          {currentEvent.isPublished ? 'Event LIVE hai (Published)' : 'Event DRAFT me hai'}
+                          {currentEvent.isPublished ? 'Event is live (published)' : 'Event is a draft'}
                         </h3>
                         <p className="text-[11px] text-gray-500">
-                          Teams layout lock karein (Lock Axis), phir Name + Security Q fix karein, phir niche Live button dabayein. Baad me changes ho to Unpublish, edit, dobara Publish (update push) karein. Certificate numbers har record ke liye fixed rahenge, layout auto-update ho jayega kyunki render live hota hai.
+                          Lock the layout first, then fix the Name + Security fields, then press Publish below. To make changes later: Unpublish, edit, and Publish again. Certificate numbers stay fixed per record, and the layout updates automatically because rendering is live.
                         </p>
                       </div>
                     </div>
@@ -1099,7 +1148,7 @@ export const AdminDashboard: React.FC = () => {
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v && v === currentEvent.primaryAuthField) {
-                            alert('Security question Name field se alag column hona chahiye.');
+                            toast.warning('Security field must differ', 'The security check must use a different column than the Name field.');
                             return;
                           }
                           handleUpdateEvent({ ...currentEvent, securityAuthField: v });
@@ -1133,11 +1182,16 @@ export const AdminDashboard: React.FC = () => {
                     {currentEvent.templateUrl && !currentEvent.templateUrl.includes('dummyimage') && (
                       <button
                         onClick={async () => {
-                          if (confirm('Are you sure you want to delete this template format? Candidates will see a blank format.')) {
-                            const updated = { ...currentEvent, templateUrl: 'https://dummyimage.com/1920x1080/0f5132/ffffff&text=Upload+Template' };
-                            await supabase.from('events').update({ template_url: updated.templateUrl }).eq('id', currentEvent.id);
-                            setEvents(events.map(ev => ev.id === currentEvent.id ? updated : ev));
-                          }
+                          const remove = await confirm({
+                            title: 'Remove current template format?',
+                            message: 'Candidates will see a blank format until a new template is uploaded.',
+                            confirmText: 'Remove template',
+                            danger: true,
+                          });
+                          if (!remove) return;
+                          const updated = { ...currentEvent, templateUrl: 'https://dummyimage.com/1920x1080/0f5132/ffffff&text=Upload+Template' };
+                          await supabase.from('events').update({ template_url: updated.templateUrl }).eq('id', currentEvent.id);
+                          setEvents(events.map(ev => ev.id === currentEvent.id ? updated : ev));
                         }}
                         className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition cursor-pointer shadow-sm"
                       >
@@ -1211,7 +1265,7 @@ export const AdminDashboard: React.FC = () => {
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
                       <div>
                         <h3 className="text-sm font-bold text-gray-800">Visual Coordinate Designer & Record Management</h3>
-                        <p className="text-[11px] text-gray-500">Coordinate drag karein, record switch karein ya single certificate delete karein</p>
+                        <p className="text-[11px] text-gray-500">Drag fields to position them, switch records, or delete a single certificate</p>
                       </div>
 
                       <div className="flex items-center gap-2">

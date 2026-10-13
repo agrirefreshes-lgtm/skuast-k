@@ -119,7 +119,7 @@ export const Navbar: React.FC = () => {
       {/* How To Use Modal Dialog */}
       {showGuide && (
         <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-xl w-full p-5 sm:p-7 shadow-2xl border border-gray-200 relative animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-5 sm:p-7 shadow-2xl border border-gray-200 relative sku-pop-in">
             <button
               onClick={() => setShowGuide(false)}
               className="absolute top-4 right-4 text-gray-400 hover:text-gray-700 p-1 rounded-full hover:bg-gray-100 transition cursor-pointer"
@@ -139,25 +139,25 @@ export const Navbar: React.FC = () => {
               <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-2xl">
                 <h3 className="font-bold text-emerald-900 text-xs sm:text-sm mb-1">🎓 For Candidates / Participants</h3>
                 <ol className="list-decimal pl-4 space-y-1 leading-relaxed text-emerald-800 font-medium">
-                  <li>Portal par jaakar apna Event select karein ya direct shared event link kholein.</li>
-                  <li>Apna <b>Name</b> aur <b>Security Check</b> (Mobile/Reg No) enter karein.</li>
-                  <li>Live certificate screen par aate hi <b>Download Official PDF</b> dabayein.</li>
+                  <li>Open the portal, select your event — or use the shared event link directly.</li>
+                  <li>Enter your <b>Name</b> and <b>Security Check</b> (Mobile / Reg No) exactly as registered.</li>
+                  <li>Once your certificate appears, choose <b>Download Official PDF</b>.</li>
                 </ol>
               </div>
 
               <div className="bg-amber-50 border border-amber-200 p-3 rounded-2xl">
                 <h3 className="font-bold text-amber-950 text-xs sm:text-sm mb-1">🛡️ For QR Verification</h3>
                 <p className="text-amber-900 leading-relaxed font-medium">
-                  Certificate par bane QR code ko mobile camera ya Verify tab ke camera scanner se scan karke authenticity check kar sakte hain.
+                  Scan the QR code printed on any certificate with a phone camera or the camera scanner on the Verify tab to check authenticity instantly.
                 </p>
               </div>
 
               <div className="bg-slate-50 border border-slate-200 p-3 rounded-2xl">
                 <h3 className="font-bold text-slate-900 text-xs sm:text-sm mb-1">⚙️ For Admins</h3>
                 <ol className="list-decimal pl-4 space-y-1 leading-relaxed text-slate-700 font-medium">
-                  <li>Admin tab me login karein.</li>
-                  <li>New Event create karke blank template aur Excel sheet upload karein.</li>
-                  <li>Inspector toolbar se fonts aur positioning adjust karke link share karein.</li>
+                  <li>Sign in from the Admin tab.</li>
+                  <li>Create a new event, upload the blank template and the candidate Excel sheet.</li>
+                  <li>Adjust fonts and positions from the inspector toolbar, then share the event link.</li>
                 </ol>
               </div>
             </div>

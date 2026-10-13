@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+﻿import React, { useRef, useState, useEffect, useCallback } from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import type { EventItem, IssuedCertificate, DynamicFieldDef } from '../types/certificate';
@@ -12,6 +12,7 @@ import {
   X, Lock, Unlock, ZoomIn, ZoomOut, Download, Loader2, Eye, EyeOff,
   Undo2, Redo2, Copy, Grid3x3, Save, CheckCircle2, Trash2
 } from 'lucide-react';
+import { useToast } from './Toast';
 
 interface Props {
   event: EventItem;
@@ -53,6 +54,8 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   
   // NEW: Save indicator state
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
+  const toast = useToast();
+
 
   const getQrVerificationUrl = () => getVerifyUrl(cert.certificate_no);
   const selectedField = selectedElementKey ? (event.fields.find(f => f.key === selectedElementKey) || null) : null;
@@ -175,7 +178,6 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
 
     const fieldToDelete = event.fields.find(f => f.key === selectedElementKey);
     if (!fieldToDelete || fieldToDelete.isLocked) return;
-    if (!confirm(`Delete "${fieldToDelete.label}" field?`)) return;
 
     onUpdateEvent({ ...event, fields: event.fields.filter(f => f.key !== selectedElementKey) });
     setSelectedElementKey(null);
@@ -393,7 +395,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       }
     } catch (err) {
       console.error('Export error:', err);
-      alert('Certificate export fail ho gaya. Please try again.');
+      toast.error('Certificate export failed', 'Could not generate the file. Please check the template image and try again.');
     } finally {
       setSelectedElementKey(prevSelected);
       setIsExporting(false);
@@ -732,7 +734,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
               <img src={event.templateUrl} alt="Certificate template" className="absolute inset-0 w-full h-full object-fill" draggable={false} crossOrigin="anonymous" />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center bg-slate-50">
-                <p className="text-xs text-slate-400">Template upload karein — blank preview</p>
+                <p className="text-xs text-slate-400">Upload a template to preview the design</p>
               </div>
             )}
             {event.fields.filter(f => f.visible && isFieldPlaced(f)).map(field => {
@@ -761,7 +763,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                     WebkitBoxOrient: 'vertical' as const, userSelect: 'none',
                     opacity: isEmpty && readOnly ? 0 : 1,
                   }}
-                  title={readOnly ? field.label : locked ? `${field.label} — locked hai (Unlock karo)` : `${field.label} — drag karein`}
+                  title={readOnly ? field.label : locked ? `${field.label} — locked (unlock to edit)` : `${field.label} — drag to position`}
                 >
                   {!isEmpty ? text : ''}
                 </div>
@@ -778,7 +780,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   fontSize: `${event.certNoConfig.fontSize}px`,
                   fontWeight: event.certNoConfig.isBold ? 700 : 400, userSelect: 'none',
                 }}
-                title={readOnly ? 'Certificate No' : 'Certificate No — drag karein'}
+                title={readOnly ? 'Certificate No' : 'Certificate No — drag to position'}
               >
                 {cert.certificate_no}
               </div>
@@ -793,7 +795,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   width: `${event.qrConfig.size}px`, height: `${event.qrConfig.size}px`,
                   background: '#fff', padding: '4px', userSelect: 'none',
                 }}
-                title={readOnly ? 'QR Code' : 'QR Code — drag karein'}
+                title={readOnly ? 'QR Code' : 'QR Code — drag to position'}
               >
                 <QRCodeSVG value={getQrVerificationUrl()} size={event.qrConfig.size - 8} level="M" />
               </div>
@@ -821,7 +823,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
                   e.dataTransfer.setData('text/plain', field.key);
                 }}
                 onClick={() => setSelectedElementKey(field.key)}
-                title={field.isLocked ? `${field.label} — locked hai pehle unlock karein` : `${field.label} — drag karein`}
+                title={field.isLocked ? `${field.label} — locked, unlock first` : `${field.label} — drag onto the certificate`}
                 className={`max-w-full break-words px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-grab active:cursor-grabbing ${
                   selectedElementKey === field.key
                     ? 'bg-emerald-800 text-white border-emerald-800'

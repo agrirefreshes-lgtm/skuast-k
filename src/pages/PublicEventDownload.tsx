@@ -121,7 +121,7 @@ export const PublicEventDownload: React.FC = () => {
           <ShieldAlert className="text-amber-500 mx-auto mb-3" size={44} />
           <h2 className="text-lg font-bold text-gray-800">Event Not Found or Link Expired</h2>
           <p className="text-xs text-gray-500 mt-2">
-            URL check karein ya apne SKUAST-K Event Coordinator se sampark karein.
+            Please re-check the link, or contact your SKUAST-K event coordinator for the correct one.
           </p>
         </div>
       </div>
@@ -154,7 +154,7 @@ export const PublicEventDownload: React.FC = () => {
             </span>
             <h2 className="text-xl md:text-2xl font-black text-slate-800">Download Your Verified Certificate</h2>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Certificate nikalne ke liye dono security fields enter karein.
+              Enter both security fields exactly as registered to retrieve your certificate.
             </p>
             {!isActive && (
               <p className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 max-w-md mx-auto">
@@ -210,7 +210,7 @@ export const PublicEventDownload: React.FC = () => {
                     <div className="flex items-center gap-2.5">
                       <CheckCircle2 className="text-emerald-700" size={24} />
                       <div>
-                        <p className="text-xs font-bold text-emerald-900">Certificate Identity Authenticated!</p>
+                        <p className="text-xs font-bold text-emerald-900">Certificate Verified</p>
                         <p className="text-[11px] text-emerald-700 font-mono">ID: {matchedCert.certificate_no}</p>
                       </div>
                     </div>
@@ -227,7 +227,7 @@ export const PublicEventDownload: React.FC = () => {
                   <ShieldAlert className="text-rose-500 mx-auto" size={36} />
                   <h4 className="text-sm font-bold text-rose-800">Certificate Not Found</h4>
                   <p className="text-xs text-rose-600 max-w-sm mx-auto leading-relaxed">
-                    Aapke daale gaye details se koi certificate match nahi hua. Kripya details check karein ya <b>Event Coordinator</b> se contact karein.
+                    No certificate matched these details. Please check the spelling and try again, or contact the <b>event coordinator</b> for help.
                   </p>
                 </div>
               )}

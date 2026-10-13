@@ -1,2 +1,143 @@
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Montserrat:wght@600;700;800&family=Playfair+Display:wght@600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cinzel:wght@600;700&family=Montserrat:wght@600;700;800&family=Playfair+Display:wght@600;700;800&display=swap');
 @import "tailwindcss";
+
+/* ============================================================
+   SKUAST-K Certificate System — Global Design Tokens & Polish
+   A refined, professional base so every page looks crafted,
+   not generated. Inter is the primary UI font; the serif faces
+   are reserved for the university wordmark / certificate titles.
+   ============================================================ */
+html, body, #root {
+  min-height: 100%;
+}
+
+body {
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  background-color: #f1f5f9; /* slate-100 base, sits under the animated layer */
+  color: #0f172a;
+}
+
+/* Subtle, slow-moving aurora background so large empty areas
+   feel alive and premium instead of flat/generic. */
+@keyframes sku-aurora {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.app-aurora {
+  background: linear-gradient(125deg, #eef2f7 0%, #e6f0ea 25%, #eef2f7 50%, #f4efe7 75%, #eef2f7 100%);
+  background-size: 400% 400%;
+  animation: sku-aurora 32s ease infinite;
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .app-aurora { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Toast + dialog animations hook into the single keyframes in the
+   Global motion section below (no duplicate definitions). */
+
+/* Custom scrollbar for a tidier, native feel */
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+
+/* =====================================================================
+   Global motion + polish tokens used by Toast / ConfirmDialog / modals
+   Helper classes live here; single keyframes below keep motion in one place.
+   ===================================================================== */
+
+/* Toast entrance (referenced by Toast.tsx .sku-toast-in) */
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(24px) scale(0.97); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+.sku-toast-in { animation: toastIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* Centered modal / confirm dialog entrance (referenced by .sku-pop-in) */
+@keyframes dialogIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.sku-pop-in { animation: dialogIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* Gentle fade-up for page sections / cards on mount */
+@keyframes fadeUp {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Soft pop for icons / badges */
+@keyframes softPop {
+  0% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Subtle sheen sweep for premium buttons/headers */
+@keyframes sheen {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+@layer utilities {
+  .animate-fade-up {
+    animation: fadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .animate-soft-pop {
+    animation: softPop 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Refined, consistent focus ring across the whole app */
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid #0f5132;
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}
