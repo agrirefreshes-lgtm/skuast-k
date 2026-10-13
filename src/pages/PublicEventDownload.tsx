@@ -158,7 +158,7 @@ export const PublicEventDownload: React.FC = () => {
             </p>
             {!isActive && (
               <p className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 max-w-md mx-auto">
-                Ye event abhi draft/pause mode me hai. Event Coordinator ke Publish karne ke baad hi download hoga.
+                This event is currently in draft mode. Certificates will be available for download once the event coordinator publishes them.
               </p>
             )}
           </div>

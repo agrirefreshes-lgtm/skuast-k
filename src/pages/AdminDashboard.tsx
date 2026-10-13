@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabaseClient';
 import { getEventUrl } from '../lib/shareUrl';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
+import { usePrompt } from '../components/PromptDialog';
 import {
   getFieldDisplayLabel,
   getFieldReference,
@@ -67,6 +68,7 @@ export const AdminDashboard: React.FC = () => {
   const [creatingAdmin, setCreatingAdmin] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
+  const prompt = usePrompt();
 
 
   const verifyLiveSession = useCallback(async (): Promise<string | null> => {
@@ -281,13 +283,18 @@ export const AdminDashboard: React.FC = () => {
       return (updated: EventItem) => {
         clearTimeout(timeoutId);
         timeoutId = setTimeout(async () => {
-          await supabase.from('events').update({
+          const { error } = await supabase.from('events').update({
             fields: updated.fields,
             primary_auth_field: updated.primaryAuthField,
             security_auth_field: updated.securityAuthField,
             qr_config: updated.qrConfig,
             cert_no_config: updated.certNoConfig,
           }).eq('id', updated.id);
+          // Background auto-save: no toast on success (avoid noise while dragging),
+          // but surface failures so layout edits are never silently lost.
+          if (error) {
+            toast.error('Layout changes could not be saved', error.message);
+          }
         }, 500);
       };
     })(),
@@ -314,7 +321,7 @@ export const AdminDashboard: React.FC = () => {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center gap-3 p-4 font-sans">
         <Loader2 className="animate-spin text-emerald-800" size={28} />
-        <p className="text-xs font-semibold text-slate-600">Admin console load ho raha hai...</p>
+        <p className="text-xs font-semibold text-slate-600">Loading your admin console…</p>
       </div>
     );
   }
@@ -349,8 +356,29 @@ export const AdminDashboard: React.FC = () => {
     const userId = await verifyLiveSession();
     if (!userId) return;
 
-    const name = prompt('Event Name (e.g. 60th ISAE Annual Convention):');
-    if (!name || !name.trim()) return;
+    const values = await prompt({
+      title: 'Create a new event',
+      message: 'Set up a certificate event. You can upload the template and student data next.',
+      fields: [
+        {
+          key: 'name',
+          label: 'Event name',
+          placeholder: 'e.g. 60th ISAE Annual Convention',
+          required: true,
+        },
+        {
+          key: 'prefix',
+          label: 'Certificate number prefix',
+          placeholder: 'e.g. SKUASTK/ISAE/2026/',
+        },
+      ],
+      confirmText: 'Create event',
+    });
+    if (!values) return;
+
+    const name = values.name.trim();
+    if (!name) return;
+
     const baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
     const { data: slugHits } = await supabase.from('events').select('slug').ilike('slug', `${baseSlug}%`);
@@ -361,7 +389,7 @@ export const AdminDashboard: React.FC = () => {
       cleanSlug = `${baseSlug}-${n}`;
     }
 
-    const prefix = prompt('Certificate Number Prefix:', `SKUASTK/${cleanSlug.substring(0, 4).toUpperCase()}/2026/`) || 'SKUASTK/CERT/2026/';
+    const prefix = (values.prefix || '').trim() || `SKUASTK/${cleanSlug.substring(0, 4).toUpperCase()}/2026/`;
 
     const newEv: EventItem = {
       id: `event-${Date.now()}`,
@@ -419,7 +447,11 @@ export const AdminDashboard: React.FC = () => {
     });
     if (!remove) return;
 
-    await supabase.from('certificates').delete().eq('event_id', eventId);
+    const { error: certError } = await supabase.from('certificates').delete().eq('event_id', eventId);
+    if (certError) {
+      toast.error('Certificates could not be removed', certError.message);
+      return;
+    }
     const { error } = await supabase.from('events').delete().eq('id', eventId);
 
     if (error) {
@@ -439,6 +471,9 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const handleToggleDownloadAccess = async (eventId: string, currentStatus: boolean) => {
+    const userId = await verifyLiveSession();
+    if (!userId) return;
+
     const newStatus = !currentStatus;
     const { error } = await supabase
       .from('events')
@@ -610,7 +645,13 @@ export const AdminDashboard: React.FC = () => {
       .getPublicUrl(filePath);
 
     const publicUrl = publicUrlData.publicUrl;
-    await supabase.from('events').update({ template_url: publicUrl }).eq('id', currentEvent.id);
+    const { error: updateError } = await supabase.from('events').update({ template_url: publicUrl }).eq('id', currentEvent.id);
+
+    if (updateError) {
+      toast.error('Template link could not be saved', updateError.message);
+      setUploadingImage(false);
+      return;
+    }
 
     const updated = { ...currentEvent, templateUrl: publicUrl };
     setEvents(events.map((ev) => (ev.id === currentEvent.id ? updated : ev)));
@@ -746,12 +787,17 @@ export const AdminDashboard: React.FC = () => {
       return;
     }
 
-    await supabase.from('events').update({
+    const { error: evError } = await supabase.from('events').update({
       fields: updatedFields,
       primary_auth_field: pField,
       security_auth_field: sField,
       batches: updatedEvent.batches,
     }).eq('id', currentEvent.id);
+
+    if (evError) {
+      toast.error('Event settings could not be updated', evError.message);
+      return;
+    }
 
     setEvents(events.map((ev) => (ev.id === currentEvent.id ? updatedEvent : ev)));
     setCertificates([...certificates, ...localNewCerts]);
@@ -775,10 +821,18 @@ export const AdminDashboard: React.FC = () => {
     });
     if (!remove) return;
 
-    await supabase.from('certificates').delete().eq('batch_id', batchId);
-    const updatedBatches = currentEvent.batches.filter((b) => b.batchId !== batchId);
-    await supabase.from('events').update({ batches: updatedBatches }).eq('id', currentEvent.id);
+    const { error: certError } = await supabase.from('certificates').delete().eq('batch_id', batchId);
+    if (certError) {
+      toast.error('Batch certificates could not be removed', certError.message);
+      return;
+    }
+    const { error: evError } = await supabase.from('events').update({ batches: currentEvent.batches.filter((b) => b.batchId !== batchId) }).eq('id', currentEvent.id);
+    if (evError) {
+      toast.error('Batch list could not be updated', evError.message);
+      return;
+    }
 
+    const updatedBatches = currentEvent.batches.filter((b) => b.batchId !== batchId);
     const updatedEvent = { ...currentEvent, batches: updatedBatches };
     setEvents(events.map((ev) => (ev.id === currentEvent.id ? updatedEvent : ev)));
     loadCertificates(currentEvent.id);
@@ -990,9 +1044,9 @@ export const AdminDashboard: React.FC = () => {
               </div>
             ) : (events.length === 0 || !currentEvent) ? (
               <div className="bg-white p-12 rounded-2xl border text-center space-y-3">
-                <p className="text-gray-600 text-sm">Abhi tak aapke department ka koi event nahi bana hai.</p>
+                <p className="text-gray-600 text-sm">You haven't created any events for your department yet.</p>
                 <button onClick={handleCreateEvent} className="bg-emerald-800 text-white text-xs font-bold px-4 py-2 rounded-xl cursor-pointer">
-                  + Pehla Event Banayein
+                  + Create Your First Event
                 </button>
               </div>
             ) : (
@@ -1064,7 +1118,7 @@ export const AdminDashboard: React.FC = () => {
                       {getEventUrl(currentEvent.slug || currentEvent.id)}
                     </span>
                     <span className="text-[11px] text-slate-500 mt-1 block">
-                      Event create hote hi auto-generated. Publish ke baad users isi link se Name + Security Q dekar certificate download kar sakte hain.
+                      This link is generated automatically when you create the event. Once published, participants use it to enter their Name and Security details to download their certificate.
                     </span>
                   </div>
                   <button
@@ -1142,7 +1196,7 @@ export const AdminDashboard: React.FC = () => {
                       </select>
                     </div>
                     <div className="min-w-0">
-                      <label className="block text-[11px] font-bold text-gray-700 mb-1">Security Check (Reg No / Mobile) * (Name se alag hona chahiye)</label>
+                      <label className="block text-[11px] font-bold text-gray-700 mb-1">Security Check (Reg No / Mobile) * (must differ from Name)</label>
                       <select
                         value={currentEvent.securityAuthField}
                         onChange={(e) => {
@@ -1190,8 +1244,13 @@ export const AdminDashboard: React.FC = () => {
                           });
                           if (!remove) return;
                           const updated = { ...currentEvent, templateUrl: 'https://dummyimage.com/1920x1080/0f5132/ffffff&text=Upload+Template' };
-                          await supabase.from('events').update({ template_url: updated.templateUrl }).eq('id', currentEvent.id);
+                          const { error } = await supabase.from('events').update({ template_url: updated.templateUrl }).eq('id', currentEvent.id);
+                          if (error) {
+                            toast.error('Template could not be removed', error.message);
+                            return;
+                          }
                           setEvents(events.map(ev => ev.id === currentEvent.id ? updated : ev));
+                          toast.success('Template removed', 'Candidates will see a blank format until a new template is uploaded.');
                         }}
                         className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition cursor-pointer shadow-sm"
                       >

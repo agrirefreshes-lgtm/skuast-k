@@ -175,6 +175,10 @@ export const UserPortal: React.FC = () => {
         throw new Error('No certificates have been published for this event yet. Please check back later or contact the event coordinator.');
       }
 
+      if (!currentEvent.fields || currentEvent.fields.length === 0) {
+        throw new Error('This event is not fully set up yet — the coordinator has not linked the verification columns. Please try again later.');
+      }
+
       // 3. Robust Excel Data Key-Insensitive Matching
       const matchedRow = certsData.find((c: any) => {
         const recordData = c.data || {};

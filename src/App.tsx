@@ -8,6 +8,7 @@ import { PublicVerification } from './pages/PublicVerification';
 import { PublicEventDownload } from './pages/PublicEventDownload';
 import { ToastProvider } from './components/Toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
+import { PromptProvider } from './components/PromptDialog';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -71,34 +72,36 @@ function App() {
   return (
     <ToastProvider>
       <ConfirmProvider>
-        <Router>
-          <div className="min-h-screen flex flex-col app-aurora selection:bg-emerald-800 selection:text-white">
-            {/* Universal University Header */}
-            <Navbar />
+        <PromptProvider>
+          <Router>
+            <div className="min-h-screen flex flex-col app-aurora selection:bg-emerald-800 selection:text-white">
+              {/* Universal University Header */}
+              <Navbar />
 
-            {/* Dynamic Page Views */}
-            <main className="flex-1">
-              <ErrorBoundary>
-                <Routes>
-                  {/* Main University Home Search */}
-                  <Route path="/" element={<UserPortal />} />
+              {/* Dynamic Page Views */}
+              <main className="flex-1">
+                <ErrorBoundary>
+                  <Routes>
+                    {/* Main University Home Search */}
+                    <Route path="/" element={<UserPortal />} />
 
-                  {/* Dedicated Public Event Slug Landing Page */}
-                  <Route path="/event/:eventSlug" element={<PublicEventDownload />} />
+                    {/* Dedicated Public Event Slug Landing Page */}
+                    <Route path="/event/:eventSlug" element={<PublicEventDownload />} />
 
-                  {/* Admin Dashboard */}
-                  <Route path="/admin" element={<AdminDashboard />} />
+                    {/* Admin Dashboard */}
+                    <Route path="/admin" element={<AdminDashboard />} />
 
-                  {/* QR Scan Verification Gateway */}
-                  <Route path="/verify" element={<PublicVerification />} />
-                </Routes>
-              </ErrorBoundary>
-            </main>
+                    {/* QR Scan Verification Gateway */}
+                    <Route path="/verify" element={<PublicVerification />} />
+                  </Routes>
+                </ErrorBoundary>
+              </main>
 
-            {/* Universal University Footer */}
-            <Footer />
-          </div>
-        </Router>
+              {/* Universal University Footer */}
+              <Footer />
+            </div>
+          </Router>
+        </PromptProvider>
       </ConfirmProvider>
     </ToastProvider>
   );
