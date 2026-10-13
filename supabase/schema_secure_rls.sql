@@ -30,6 +30,7 @@
 --    Admin (authenticated): full control.
 -- ---------------------------------------------------------------------
 drop policy if exists "public read events" on public.events;
+drop policy if exists "authenticated read events" on public.events;
 create policy "public read events"
   on public.events for select
   to anon
@@ -41,6 +42,7 @@ create policy "authenticated read events"
   using (true);                           -- admins see all events (drafts too)
 
 drop policy if exists "open write events" on public.events;
+drop policy if exists "authenticated write events" on public.events;
 create policy "authenticated write events"
   on public.events for all
   to authenticated
@@ -54,11 +56,13 @@ revoke insert, update, delete on public.events from anon;
 --    Admin (authenticated): full control.
 -- ---------------------------------------------------------------------
 drop policy if exists "public read certificates" on public.certificates;
+drop policy if exists "authenticated read certificates" on public.certificates;
 create policy "public read certificates"
   on public.certificates for select
   using (true);
 
 drop policy if exists "open write certificates" on public.certificates;
+drop policy if exists "authenticated write certificates" on public.certificates;
 create policy "authenticated write certificates"
   on public.certificates for all
   to authenticated
@@ -76,6 +80,8 @@ revoke insert, update, delete on public.certificates from anon;
 drop policy if exists "public read admin_profiles" on public.admin_profiles;
 drop policy if exists "open insert admin_profiles" on public.admin_profiles;
 drop policy if exists "open update admin_profiles" on public.admin_profiles;
+drop policy if exists "authenticated read admin_profiles" on public.admin_profiles;
+drop policy if exists "self update admin_profiles" on public.admin_profiles;
 
 create policy "authenticated read admin_profiles"
   on public.admin_profiles for select
@@ -96,6 +102,9 @@ revoke insert, update, delete on public.admin_profiles from anon;
 --    Admin (authenticated): upload / update / delete.
 -- ---------------------------------------------------------------------
 drop policy if exists "public read templates" on storage.objects;
+drop policy if exists "authenticated upload templates" on storage.objects;
+drop policy if exists "authenticated update templates" on storage.objects;
+drop policy if exists "authenticated delete templates" on storage.objects;
 create policy "public read templates"
   on storage.objects for select
   using (bucket_id = 'templates');
