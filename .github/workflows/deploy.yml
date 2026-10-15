@@ -1,0 +1,47 @@
+name: Deploy to GitHub Pages
+
+# Automatically build and publish the site to the `gh-pages` branch whenever
+# code is pushed to `main` (or run manually from the Actions tab). This removes
+# the need to run `npm run deploy` by hand.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Allow the workflow to push to the `gh-pages` branch using the built-in token.
+permissions:
+  contents: write
+
+# Only one deploy at a time; never cancel an in-progress deploy mid-push.
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies (clean, from lockfile)
+        run: npm ci
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Deploy dist/ to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          # Keep the deployed branch as a plain static site (skip Jekyll) so
+          # Vite's underscore-prefixed asset folders are not stripped.
+          enable_jekyll: false
