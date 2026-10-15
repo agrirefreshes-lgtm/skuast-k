@@ -370,6 +370,20 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
     setIsExporting(true);
     const prevSelected = selectedElementKey;
     setSelectedElementKey(null);
+    // html2canvas baseline measure karne ke liye ek hidden <img> ko
+    // document.body me append karta hai. Tailwind preflight ka
+    // `img { display: block }` us metrics-img ko block bana deta hai, jisse
+    // baseline calculation bigad jaati hai aur canvas me saara text neeche
+    // shift ho kar overflow:hidden fields ke bottom par cut ho jaata hai
+    // (preview sahi dikhta tha, downloaded file me text crop hota tha).
+    // Export ke dauran us metrics-container ke img ko wapas inline-block par
+    // force karte hain; selector sirf body ke direct id-less div (html2canvas
+    // ka metrics container) ke imgs par apply hota hai — app ke root/layout
+    // imgs untouched rehte hain.
+    const fontMetricsFix = document.createElement('style');
+    fontMetricsFix.setAttribute('data-h2c-fontmetrics-fix', '');
+    fontMetricsFix.textContent = 'body > div:not([id]) > img { display: inline-block !important; }';
+    document.head.appendChild(fontMetricsFix);
     try {
       await new Promise<void>((resolve) => setTimeout(() => resolve(), 60));
       const canvas = await html2canvas(containerRef.current, {
@@ -397,6 +411,7 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
       console.error('Export error:', err);
       toast.error('Certificate export failed', 'Could not generate the file. Please check the template image and try again.');
     } finally {
+      fontMetricsFix.remove();
       setSelectedElementKey(prevSelected);
       setIsExporting(false);
     }
