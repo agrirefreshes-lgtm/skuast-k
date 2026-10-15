@@ -10,15 +10,16 @@ import { join } from 'path';
 
 // ─── 3. AUTHENTICATION SECURITY TESTS ──────────────────────────────────────────
 
-test('SEC-020: Session storage usage is flagged for review', () => {
-  const content = readFileSync(join(process.cwd(), 'src', 'components', 'AdminLogin.tsx'), 'utf8');
-  const hasSessionStorage = content.includes('sessionStorage');
+test('SEC-020: No client-side session hint storage (Supabase Auth owns the session)', () => {
+  const adminContent = readFileSync(join(process.cwd(), 'src', 'pages', 'AdminDashboard.tsx'), 'utf8');
+  const loginContent = readFileSync(join(process.cwd(), 'src', 'components', 'AdminLogin.tsx'), 'utf8');
+  const hasSessionStorage = adminContent.includes('sessionStorage') || loginContent.includes('sessionStorage');
   if (hasSessionStorage) {
     console.warn('  ⚠  SEC-020: sessionStorage still detected — remove before production');
   } else {
     console.log('  ✓ SEC-020: sessionStorage removed — secure');
   }
-  assert.ok(true, 'Session storage audit completed');
+  assert.ok(!hasSessionStorage, 'Admin session must rely on Supabase Auth, not sessionStorage');
 });
 
 test('SEC-021: Password minimum length enforced', () => {

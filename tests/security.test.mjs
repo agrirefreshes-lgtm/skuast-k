@@ -7,24 +7,32 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { createRequire } from 'module';
 import { join } from 'path';
 
 const require = createRequire(import.meta.url);
 const { execSync } = require('child_process');
 
+// Recursively list files under a dir (cross-platform — no `dir /s /B`).
+const listFilesRecursive = (dir) => {
+  const out = [];
+  if (!existsSync(dir)) return out;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...listFilesRecursive(full));
+    else out.push(full);
+  }
+  return out;
+};
+
 // ─── 1. SECRETS & CREDENTIALS TESTS ────────────────────────────────────────────
 
 test('SEC-001: No hardcoded API keys in source files', () => {
   const srcDir = join(process.cwd(), 'src');
-  const files = [];
-  if (existsSync(srcDir)) {
-    const entries = process.platform === 'win32'
-      ? execSync('dir /s /B "' + srcDir + '"').toString().split('\n')
-      : [];
-    files.push(...entries.filter(f => f.endsWith('.ts') || f.endsWith('.tsx') || f.endsWith('.js')));
-  }
+  const files = listFilesRecursive(srcDir).filter(
+    (f) => f.endsWith('.ts') || f.endsWith('.tsx') || f.endsWith('.js')
+  );
 
   const keyPatterns = [
     /api_key['"]?\s*[:=]\s*['"][a-zA-Z0-9_-]{20,}/,
@@ -38,7 +46,7 @@ test('SEC-001: No hardcoded API keys in source files', () => {
 
   let violations = 0;
   for (const file of files) {
-    const content = readFileSync(join(process.cwd(), 'src', file), 'utf8');
+    const content = readFileSync(file, 'utf8');
     for (const pattern of keyPatterns) {
       if (pattern.test(content)) {
         violations++;

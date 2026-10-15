@@ -78,9 +78,9 @@ Cache-Control headers set: `no-cache, no-store, must-revalidate`
 ## Security Tests Summary
 
 ```
-✅ 37/37 tests passing
+✅ 38/38 tests passing
 
 Security (16 tests): SEC-001 to SEC-061
 Performance (10 tests): PERF-001 to PERF-051
-Certificate Fields (11 tests)
+Certificate Fields (12 tests)
 ```

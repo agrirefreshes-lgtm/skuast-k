@@ -33,8 +33,22 @@ jobs:
       - name: Install dependencies (clean, from lockfile)
         run: npm ci
 
+      - name: Check Supabase secrets are configured
+        run: |
+          if [ -z "${{ secrets.VITE_SUPABASE_URL }}" ] || [ -z "${{ secrets.VITE_SUPABASE_ANON_KEY }}" ]; then
+            echo "::error::Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY repository secrets."
+            echo "Add them under Settings → Secrets and variables → Actions, then re-run this workflow."
+            exit 1
+          fi
+
       - name: Build production bundle
         run: npm run build
+        env:
+          # Vite inlines VITE_* vars at build time. Without these the shipped
+          # bundle throws at startup (supabaseClient has no fallback), so the
+          # workflow fails fast above instead of deploying a broken site.
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
       - name: Deploy dist/ to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4

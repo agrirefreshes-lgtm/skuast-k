@@ -74,7 +74,6 @@ export const AdminDashboard: React.FC = () => {
   const verifyLiveSession = useCallback(async (): Promise<string | null> => {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error || !session?.user) {
-      sessionStorage.removeItem('skuastk_admin_auth');
       setIsAuthenticated(false);
       toast.error('Security session expired', 'Please sign in again to continue.');
       return null;
@@ -205,7 +204,6 @@ export const AdminDashboard: React.FC = () => {
 
         if (!session?.user) {
           console.log('checkExistingSession: no active session found');
-          sessionStorage.removeItem('skuastk_admin_auth');
           setIsAuthenticated(false);
           setLoading(false);
           return;
@@ -216,11 +214,9 @@ export const AdminDashboard: React.FC = () => {
         
         // Only set isAuthenticated after successful profile load
         setIsAuthenticated(true);
-        sessionStorage.setItem('skuastk_admin_auth', 'true');
         console.log('checkExistingSession: auth complete, dashboard ready');
       } catch (err: any) {
         console.error('checkExistingSession ERROR:', err);
-        sessionStorage.removeItem('skuastk_admin_auth');
         setIsAuthenticated(false);
         setLoading(false);
         toast.error('Session check failed', (err?.message || String(err)) + ' Please sign in again.');
@@ -239,7 +235,6 @@ export const AdminDashboard: React.FC = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    sessionStorage.removeItem('skuastk_admin_auth');
     setIsAuthenticated(false);
     setUserProfile(null);
     setEvents([]);
