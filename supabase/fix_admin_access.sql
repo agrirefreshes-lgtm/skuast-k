@@ -8,6 +8,8 @@
 --      search_path = public tha. Ab function dono schemas me dhoondta hai.
 --   2. SuperAdmin ab department admin ko SUSPEND (temporary access stop)
 --      aur REMOVE (permanently hata) sakta hai — naye RPC ke through.
+--   3. "Invalid login credentials" fix — SQL se bane har login account ke
+--      saath auth.identities row ab banti hai (+ purano ka repair block).
 -- =====================================================================
 
 -- FIX-1: pgcrypto + create_department_admin recreate
@@ -26,12 +28,18 @@ set search_path = public, extensions   -- <- yahi asli gen_salt fix hai
 as $$
 declare
   v_uid uuid;
+  v_email text := lower(btrim(p_email));
 begin
-  if p_email is null or btrim(p_email) = '' then
+  if v_email is null or v_email = '' then
     raise exception 'Email required';
   end if;
   if p_password is null or char_length(p_password) < 6 then
     raise exception 'Password min 6 chars required';
+  end if;
+
+  -- Clear error agar login account pehle se exist karta hai
+  if exists (select 1 from auth.users u where lower(u.email) = v_email) then
+    raise exception 'Login account with this email already exists (%)', v_email;
   end if;
 
   -- auth.users me naya login create
@@ -43,22 +51,34 @@ begin
     is_super_admin, role
   ) values (
     v_uid, '00000000-0000-0000-0000-000000000000',
-    lower(btrim(p_email)),
+    v_email,
     crypt(p_password, gen_salt('bf')),
     now(), now(), now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{}'::jsonb, false, 'authenticated'
   );
 
+  -- ZAROORI: auth.identities row. Bina iske Supabase Auth (GoTrue) password
+  -- login me "Invalid login credentials" deta hai — user auth.users me
+  -- hone ke bawajood, kyunki login identity table se hi lookup hota hai.
+  insert into auth.identities (
+    provider_id, user_id, identity_data, provider,
+    last_sign_in_at, created_at, updated_at
+  ) values (
+    v_uid::text, v_uid,
+    jsonb_build_object('sub', v_uid::text, 'email', v_email, 'email_verified', true),
+    'email', now(), now(), now()
+  );
+
   -- admin_profiles row (role = admin, is_active = true)
   insert into public.admin_profiles (id, email, role, department, is_active)
-  values (v_uid, lower(btrim(p_email)), 'admin',
+  values (v_uid, v_email, 'admin',
           coalesce(nullif(btrim(p_department), ''), 'Academic Department'), true)
   on conflict (id) do update
     set email = excluded.email,
         department = excluded.department;
 
-  return jsonb_build_object('id', v_uid, 'email', lower(btrim(p_email)));
+  return jsonb_build_object('id', v_uid, 'email', v_email);
 end;
 $$;
 
@@ -171,6 +191,26 @@ begin
   return jsonb_build_object('id', p_admin_id, 'email', v_email, 'removed', true);
 end;
 $$;
+
+-- =====================================================================
+-- FIX-5: REPAIR — jo login accounts bina auth.identities ke ban gaye the
+-- (symptom: password bilkul sahi par "Invalid login credentials" aata hai)
+-- Ye SIRF un users ke liye identity row banata hai jiska koi email identity nahi.
+-- Idhar pehle se banaya gaya naya admin bhi isi block se theek ho jayega
+-- (password wahi rahega jo create karte waqt diya tha).
+insert into auth.identities (
+  provider_id, user_id, identity_data, provider,
+  last_sign_in_at, created_at, updated_at
+)
+select u.id::text, u.id,
+       jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true),
+       'email', now(), now(), now()
+from auth.users u
+where u.email is not null
+  and not exists (
+    select 1 from auth.identities i
+    where i.user_id = u.id and i.provider = 'email'
+  );
 
 -- =====================================================================
 -- VERIFY (optional):
