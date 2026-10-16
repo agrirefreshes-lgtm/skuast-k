@@ -10,7 +10,9 @@ import {
 import {
   Bold, Italic, AlignLeft, AlignCenter, AlignRight, Palette, Type,
   X, Lock, Unlock, ZoomIn, ZoomOut, Download, Loader2, Eye, EyeOff,
-  Undo2, Redo2, Copy, Grid3x3, Save, CheckCircle2, Trash2
+  Undo2, Redo2, Copy, Grid3x3, Save, CheckCircle2, Trash2, Search,
+  CaseUpper, Baseline, RotateCw, Ruler, MousePointer2, Layers,
+  Minus, Plus, FileText
 } from 'lucide-react';
 import { useToast } from './Toast';
 
@@ -51,6 +53,13 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   // NEW: Alignment guides state
   const [showGrid, setShowGrid] = useState<boolean>(false);
   const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
+
+  // Word-style ribbon: active tab (Home / Insert / View)
+  const [activeTab, setActiveTab] = useState<'Home' | 'Insert' | 'View'>('Home');
+  // Fields-tray search + drag-over highlight + ruler toggle
+  const [traySearch, setTraySearch] = useState<string>('');
+  const [dropHover, setDropHover] = useState<boolean>(false);
+  const [showRulers, setShowRulers] = useState<boolean>(false);
   
   // NEW: Save indicator state
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
@@ -272,14 +281,84 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
   };
 
   const placeFieldFromDrop = (key: string, clientX: number, clientY: number) => {
-    const field = event.fields.find((item) => item.key === key);
-    if (!field || !containerRef.current || field.isLocked) return;
+    if (!onUpdateEvent || !containerRef.current) return;
+    if (isLockedKey(key)) {
+      toast.warning('Layer is locked', 'Unlock it from the Layers list first.');
+      return;
+    }
+    const clamp = (v: number) => Math.max(0, Math.min(100, Number(v.toFixed(2))));
     const rect = containerRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(100, Number((((clientX - rect.left) / rect.width) * 100).toFixed(2))));
-    const y = Math.max(0, Math.min(100, Number((((clientY - rect.top) / rect.height) * 100).toFixed(2))));
+    if (rect.width === 0 || rect.height === 0) return;
+    let x = clamp(((clientX - rect.left) / rect.width) * 100);
+    let y = clamp(((clientY - rect.top) / rect.height) * 100);
+    if (snapToGrid) {
+      x = clamp(Math.round(x / 5) * 5);
+      y = clamp(Math.round(y / 5) * 5);
+    }
+    // History auto-captures via the event-change effect above — no manual push.
+    if (key === '__cert_no__') {
+      onUpdateEvent({ ...event, certNoConfig: { ...event.certNoConfig, x, y } });
+      setSelectedElementKey(key);
+      return;
+    }
+    if (key === '__qr_code__') {
+      onUpdateEvent({ ...event, qrConfig: { ...event.qrConfig, x, y } });
+      setSelectedElementKey(key);
+      return;
+    }
+    const field = event.fields.find((item) => item.key === key);
+    if (!field) return;
     updateField(key, { x, y, isPlaced: true });
     setSelectedElementKey(key);
   };
+
+  // ---------------- WORD-STYLE TRAY HELPERS ----------------
+  // Canvas drop MIME must match the existing onDragOver/onDrop contract.
+  const startFieldDrag = (e: React.DragEvent, key: string) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/x-skuastk-certificate-field', key);
+    e.dataTransfer.setData('text/plain', key);
+  };
+
+  // Tray me ↑/↓ se select, Enter se place (mouse-free keyboard flow)
+  const handleTrayKeyNav = (e: React.KeyboardEvent, keys: string[]) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+    e.preventDefault();
+    const idx = keys.indexOf(selectedElementKey || '');
+    if (e.key === 'Enter') {
+      if (!selectedElementKey) return;
+      if (selectedElementKey === '__cert_no__' || selectedElementKey === '__qr_code__') {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect) placeFieldFromDrop(selectedElementKey, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return;
+      }
+      handleAddField(selectedElementKey);
+      return;
+    }
+    const next = e.key === 'ArrowDown'
+      ? keys[Math.min(keys.length - 1, (idx < 0 ? -1 : idx) + 1)]
+      : keys[Math.max(0, (idx < 0 ? keys.length : idx) - 1)];
+    if (next) setSelectedElementKey(next);
+  };
+
+  // One-click place: unplaced field ko canvas ke center me lao (drag bhi chalta hai)
+  const handleAddField = (key: string) => {
+    const field = event.fields.find((item) => item.key === key);
+    if (!field) return;
+    if (field.isLocked) {
+      setSelectedElementKey(key);
+      toast.warning('Layer is locked', 'Unlock it before moving.');
+      return;
+    }
+    if (!isFieldPlaced(field) && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      placeFieldFromDrop(key, rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return;
+    }
+    setSelectedElementKey(key);
+  };
+
+  const handleZoomReset = () => setZoomLevel(1);
 
   const handleFontFamilyChange = (key: string, fontFamily: string) => {
     if (key === '__cert_no__') { onUpdateEvent?.({ ...event, certNoConfig: { ...event.certNoConfig, fontFamily } }); return; }
@@ -417,500 +496,707 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
     }
   };
 
+  // ---------------- WORD-STYLE RENDER HELPERS ----------------
+  const selIsCertNo = selectedElementKey === '__cert_no__';
+  const selIsQr = selectedElementKey === '__qr_code__';
+  const selIsField = !!selectedField && !selIsCertNo && !selIsQr;
+  const selLabel = selIsCertNo ? 'Certificate No' : selIsQr ? 'QR Code' : (selectedField?.label || selectedElementKey || '');
+  const allLocked = event.fields.length > 0
+    && event.fields.every(f => f.isLocked) && event.qrConfig.isLocked && event.certNoConfig.isLocked;
+  const trayFields = event.fields.filter(f =>
+    !traySearch.trim() || f.label.toLowerCase().includes(traySearch.trim().toLowerCase())
+  );
+  const trayNavKeys = [...trayFields.map(f => f.key), '__cert_no__', '__qr_code__'];
+
+  const ribbonBtn = 'flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg text-slate-700 hover:bg-emerald-50 hover:text-emerald-900 cursor-pointer transition disabled:opacity-30 disabled:cursor-not-allowed min-w-[3rem]';
+  const ribbonBtnActive = 'flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg bg-emerald-800 text-white cursor-pointer transition disabled:opacity-30 disabled:cursor-not-allowed min-w-[3rem]';
+  const ribbonLabel = 'text-[9px] font-semibold leading-none whitespace-nowrap';
+  const ribbonGroup = 'flex items-stretch gap-0.5 px-2 border-r border-slate-200 last:border-r-0';
+  const ribbonGroupTitle = 'text-[9px] font-bold uppercase tracking-wider text-slate-400 text-center leading-none mt-0.5';
+
   return (
     <div className="relative w-full">  {/* Removed select-none - only canvas has it */}
-      {/* TOOLBAR: Undo/Redo, Save Status, Grid Controls */}
+      {/* ═══════════ WORD-STYLE TITLE BAR ═══════════ */}
       {!readOnly && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-slate-50 to-gray-50 border border-slate-200 rounded-xl px-4 py-2.5 shadow-sm">
-          {/* Left: Undo/Redo + Save Status */}
-          <div className="flex items-center gap-3">
-            {/* Undo/Redo Buttons */}
-            <div className="flex items-center gap-1 bg-white rounded-lg border border-slate-200 px-1.5 py-1 shadow-sm">
-              <button
-                onClick={handleUndo}
-                disabled={!canUndo}
-                className="p-1.5 rounded-md hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 cursor-pointer transition"
-                title="Undo (Ctrl+Z)"
-              >
-                <Undo2 size={15} />
-              </button>
-              <div className="w-px h-4 bg-slate-200" />
-              <button
-                onClick={handleRedo}
-                disabled={!canRedo}
-                className="p-1.5 rounded-md hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 cursor-pointer transition"
-                title="Redo (Ctrl+Shift+Z)"
-              >
-                <Redo2 size={15} />
-              </button>
-            </div>
-
-            {/* Save Status Indicator */}
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${
-              saveStatus === 'saved' 
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                : saveStatus === 'saving'
-                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                : 'bg-blue-50 text-blue-700 border-blue-200'
-            }`}>
-              {saveStatus === 'saved' ? (
-                <><CheckCircle2 size={13} /> Saved</>
-              ) : saveStatus === 'saving' ? (
-                <><Save size={13} className="animate-pulse" /> Saving...</>
-              ) : (
-                <><Save size={13} /> Unsaved changes</>
-              )}
-            </div>
-
-            {/* History Counter */}
-            <span className="text-[10px] text-slate-500 font-mono bg-white px-2 py-1 rounded-md border border-slate-200">
-              {historyIndex + 1}/{history.length}
-            </span>
+        <div className="flex items-center gap-2 bg-[#0f5132] text-white px-3 py-1.5 rounded-t-2xl">
+          <FileText size={14} className="text-amber-300 shrink-0" />
+          <span className="text-xs font-bold truncate">{event.name || 'Untitled certificate'} — Designer</span>
+          <span className={`ml-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+            saveStatus === 'saved' ? 'bg-emerald-400/20 text-emerald-100'
+            : saveStatus === 'saving' ? 'bg-amber-400/20 text-amber-100' : 'bg-sky-400/20 text-sky-100'
+          }`}>
+            {saveStatus === 'saved' ? <><CheckCircle2 size={11} /> Saved</>
+              : saveStatus === 'saving' ? <><Save size={11} className="animate-pulse" /> Saving…</>
+              : <><Save size={11} /> Unsaved</>}
+          </span>
+          <span className="text-[10px] font-mono text-emerald-200/80">{historyIndex + 1}/{history.length}</span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              onClick={() => handleExportCanvas('png')}
+              disabled={isExporting}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition cursor-pointer disabled:opacity-50"
+            >
+              {isExporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} PNG
+            </button>
+            <button
+              onClick={() => handleExportCanvas('pdf')}
+              disabled={isExporting}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-emerald-950 text-[11px] font-bold transition cursor-pointer disabled:opacity-50"
+            >
+              {isExporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} Official PDF
+            </button>
           </div>
-
-          {/* Right: Grid Controls + Keyboard Shortcuts Help */}
-          <div className="flex items-center gap-2">
-            {/* Grid Toggle */}
+        </div>
+      )}
+      {readOnly && (
+        <div className="flex items-center gap-1.5 bg-[#0f5132] px-3 py-1.5 rounded-t-2xl">
+          <FileText size={14} className="text-amber-300 shrink-0" />
+          <span className="text-xs font-bold truncate">{event.name || 'Certificate'}</span>
+          <div className="ml-auto flex items-center gap-1.5">
             <button
-              onClick={() => setShowGrid(!showGrid)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
-                showGrid ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              }`}
-              title="Show alignment grid"
+              onClick={() => handleExportCanvas('png')}
+              disabled={isExporting}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition cursor-pointer disabled:opacity-50"
             >
-              <Grid3x3 size={13} /> Grid
+              {isExporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} PNG
             </button>
-
-            {/* Snap to Grid Toggle */}
             <button
-              onClick={() => setSnapToGrid(!snapToGrid)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
-                snapToGrid ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              }`}
-              title="Snap to grid (5% increments)"
+              onClick={() => handleExportCanvas('pdf')}
+              disabled={isExporting}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-emerald-950 text-[11px] font-bold transition cursor-pointer disabled:opacity-50"
             >
-              <Grid3x3 size={13} /> Snap
+              {isExporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} Official PDF
             </button>
+          </div>
+        </div>
+      )}
 
-            {/* Keyboard Shortcuts Help */}
-            <div className="group relative">
-              <button className="flex items-center justify-center w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-500 hover:bg-slate-50 cursor-pointer text-xs font-bold">
-                ?
-              </button>
-              <div className="absolute right-0 top-full mt-2 w-72 bg-slate-900 text-white text-[11px] rounded-xl p-4 shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                <p className="font-bold mb-2 text-amber-400">⌨️ Keyboard Shortcuts</p>
-                <div className="space-y-1.5">
-                  <div className="flex justify-between"><span>Undo</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Ctrl+Z</kbd></div>
-                  <div className="flex justify-between"><span>Redo</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Ctrl+Shift+Z</kbd></div>
-                  <div className="flex justify-between"><span>Duplicate field</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Ctrl+D</kbd></div>
-                  <div className="flex justify-between"><span>Delete field</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Del</kbd></div>
-                  <div className="flex justify-between"><span>Move (1%)</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">↑↓←→</kbd></div>
-                  <div className="flex justify-between"><span>Move (0.1%)</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Shift+↑↓</kbd></div>
+
+      {/* ═══════════ TAB STRIP (Home / Insert / View) ═══════════ */}
+      {!readOnly && (
+        <div className="flex items-center gap-1 bg-white border-b border-slate-200 px-2 pt-1">
+          {(['Home', 'Insert', 'View'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-3.5 py-1.5 rounded-t-lg text-xs font-bold transition cursor-pointer ${
+                activeTab === tab
+                  ? 'bg-slate-100 text-emerald-900 shadow-[inset_0_2px_0_#0f5132]'
+                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+          <div className="ml-auto flex items-center gap-0.5 pb-1">
+            <button onClick={handleUndo} disabled={!canUndo} title="Undo (Ctrl+Z)"
+              className="p-1.5 rounded-md hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 cursor-pointer transition">
+              <Undo2 size={15} />
+            </button>
+            <button onClick={handleRedo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)"
+              className="p-1.5 rounded-md hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 cursor-pointer transition">
+              <Redo2 size={15} />
+            </button>
+          </div>
+        </div>
+      )}
+      {/* ═══════════ RIBBON — HOME ═══════════ */}
+      {!readOnly && activeTab === 'Home' && (
+        <div className="bg-slate-100/80 border-b border-slate-200 px-2 py-1.5">
+          <div className="flex flex-wrap items-stretch gap-y-1">
+            {/* Clipboard */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col items-center">
+                <div className="flex items-center gap-0.5">
+                  <button onClick={handleDuplicateField} disabled={!selIsField} title="Duplicate field (Ctrl+D)" className={ribbonBtn}>
+                    <Copy size={16} /><span className={ribbonLabel}>Duplicate</span>
+                  </button>
+                  <button onClick={handleDeleteField} disabled={!selectedElementKey} title="Delete field (Del)" className={ribbonBtn}>
+                    <Trash2 size={16} /><span className={ribbonLabel}>Delete</span>
+                  </button>
                 </div>
+                <span className={ribbonGroupTitle}>Clipboard</span>
+              </div>
+            </div>
+            {/* Font */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col">
+                <div className="flex items-center gap-1">
+                  <Type size={13} className="text-slate-400 shrink-0" />
+                  <select
+                    value={selIsCertNo ? (event.certNoConfig.fontFamily || 'Georgia, serif') : (selectedField?.fontFamily ?? 'Georgia, serif')}
+                    onChange={(e) => selectedElementKey && !selIsQr && handleFontFamilyChange(selectedElementKey, e.target.value)}
+                    disabled={!selectedElementKey || selIsQr}
+                    title="Font family"
+                    className="max-w-[9.5rem] text-[11px] rounded-lg border border-slate-300 bg-white px-1.5 py-1 cursor-pointer disabled:opacity-40"
+                  >
+                    {CERT_FONTS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  </select>
+                  <input
+                    type="number" min={6} max={120}
+                    value={selIsCertNo ? event.certNoConfig.fontSize : (selectedField?.fontSize ?? 14)}
+                    onChange={(e) => selectedElementKey && !selIsQr && handleFontSizeChange(selectedElementKey, Number(e.target.value) || 14)}
+                    disabled={!selectedElementKey || selIsQr}
+                    title="Font size"
+                    className="w-14 text-[11px] rounded-lg border border-slate-300 bg-white px-1.5 py-1 text-right disabled:opacity-40"
+                  />
+                  <Palette size={13} className="text-slate-400 shrink-0" />
+                  <input
+                    type="color"
+                    value={selIsCertNo ? event.certNoConfig.color : (selectedField?.color ?? '#111827')}
+                    onChange={(e) => selectedElementKey && !selIsQr && handleColorChange(selectedElementKey, e.target.value)}
+                    disabled={!selectedElementKey || selIsQr}
+                    title="Text colour"
+                    className="w-8 h-7 rounded border border-slate-300 cursor-pointer bg-white p-0.5 disabled:opacity-40"
+                  />
+                </div>
+                <div className="flex items-center gap-0.5 mt-0.5">
+                  <button onClick={() => selectedElementKey && handleToggleBold(selectedElementKey)} title="Bold"
+                    disabled={!selectedElementKey || selIsQr}
+                    className={`p-1.5 rounded-md cursor-pointer ${((selIsCertNo && event.certNoConfig.isBold) || selectedField?.isBold) ? 'bg-emerald-800 text-white' : 'text-slate-600 hover:bg-white'} disabled:opacity-30`}>
+                    <Bold size={14} />
+                  </button>
+                  <button onClick={() => selectedElementKey && handleToggleItalic(selectedElementKey)} title="Italic"
+                    disabled={!selIsField}
+                    className={`p-1.5 rounded-md cursor-pointer ${selectedField?.isItalic ? 'bg-emerald-800 text-white' : 'text-slate-600 hover:bg-white'} disabled:opacity-30`}>
+                    <Italic size={14} />
+                  </button>
+                  <button onClick={() => selectedElementKey && handleToggleUppercase(selectedElementKey)} title="UPPERCASE"
+                    disabled={!selIsField}
+                    className={`p-1.5 rounded-md cursor-pointer ${selectedField?.isUppercase ? 'bg-emerald-800 text-white' : 'text-slate-600 hover:bg-white'} disabled:opacity-30`}>
+                    <CaseUpper size={14} />
+                  </button>
+                  <div className="w-px h-5 bg-slate-300 mx-0.5" />
+                  {(['left', 'center', 'right'] as const).map((a) => (
+                    <button key={a} onClick={() => selectedElementKey && handleAlignChange(selectedElementKey, a)} title={`Align ${a}`}
+                      disabled={!selIsField}
+                      className={`p-1.5 rounded-md cursor-pointer ${selectedField?.align === a ? 'bg-emerald-800 text-white' : 'text-slate-600 hover:bg-white'} disabled:opacity-30`}>
+                      {a === 'left' ? <AlignLeft size={14} /> : a === 'center' ? <AlignCenter size={14} /> : <AlignRight size={14} />}
+                    </button>
+                  ))}
+                </div>
+                <span className={ribbonGroupTitle}>Font</span>
+              </div>
+            </div>
+            {/* Spacing */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col justify-center gap-1 px-1 min-w-[10rem]">
+                <label className="flex items-center gap-1.5 text-[10px] text-slate-500" title="Text width (wrap)">
+                  <Baseline size={11} className="shrink-0" />
+                  <input type="range" min={10} max={100} value={selIsField ? getFieldWidthPercent(selectedField!.maxWidth) : 60}
+                    onChange={(e) => selectedElementKey && selIsField && handleMaxWidthChange(selectedElementKey, Number(e.target.value))}
+                    disabled={!selIsField} className="flex-1 h-1 cursor-pointer disabled:opacity-40" />
+                  <span className="font-mono w-7 text-right">{selIsField ? getFieldWidthPercent(selectedField!.maxWidth) : '—'}</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-[10px] text-slate-500" title="Line height">
+                  <span className="w-[11px] text-center font-bold">≡</span>
+                  <input type="range" min={0.8} max={3} step={0.1} value={selIsField ? selectedField!.lineHeight : 1.2}
+                    onChange={(e) => selectedElementKey && selIsField && handleLineHeightChange(selectedElementKey, Number(e.target.value))}
+                    disabled={!selIsField} className="flex-1 h-1 cursor-pointer disabled:opacity-40" />
+                  <span className="font-mono w-7 text-right">{selIsField ? selectedField!.lineHeight.toFixed(1) : '—'}</span>
+                </label>
+                <span className={ribbonGroupTitle}>Spacing</span>
+              </div>
+            </div>
+            {/* Layout — max lines, letter spacing, rotation (dynamic fields) */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col justify-center gap-1 px-1 min-w-[10rem]">
+                <label className="flex items-center gap-1.5 text-[10px] text-slate-500" title="Max lines (wrap limit)">
+                  <span className="w-[11px] text-center font-bold">¶</span>
+                  <input type="number" min={1} max={10} value={selIsField ? (selectedField!.maxLines ?? 1) : 1}
+                    onChange={(e) => selectedElementKey && selIsField && handleMaxLinesChange(selectedElementKey, Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+                    disabled={!selIsField} className="w-9 text-[10px] rounded border border-slate-300 bg-white px-1 py-0.5 text-center cursor-pointer disabled:opacity-40" />
+                  <span className="font-mono w-7 text-right">{selIsField ? (selectedField!.maxLines ?? 1) : '—'}</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-[10px] text-slate-500" title="Letter spacing (px)">
+                  <span className="w-[11px] text-center font-bold tracking-tighter">Aa</span>
+                  <input type="range" min={-5} max={10} step={0.5} value={selIsField ? (selectedField!.letterSpacing ?? 0) : 0}
+                    onChange={(e) => selectedElementKey && selIsField && handleLetterSpacingChange(selectedElementKey, Number(e.target.value))}
+                    disabled={!selIsField} className="flex-1 h-1 cursor-pointer disabled:opacity-40" />
+                  <span className="font-mono w-7 text-right">{selIsField ? (selectedField!.letterSpacing ?? 0).toFixed(1) : '—'}</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-[10px] text-slate-500" title="Rotation (degrees)">
+                  <RotateCw size={11} className="shrink-0" />
+                  <input type="range" min={-90} max={90} value={selIsField ? (selectedField!.rotation ?? 0) : 0}
+                    onChange={(e) => selectedElementKey && selIsField && handleRotationChange(selectedElementKey, Number(e.target.value))}
+                    disabled={!selIsField} className="flex-1 h-1 cursor-pointer disabled:opacity-40" />
+                  <span className="font-mono w-7 text-right">{selIsField ? `${(selectedField!.rotation ?? 0).toFixed(0)}°` : '—'}</span>
+                </label>
+                <span className={ribbonGroupTitle}>Layout</span>
+              </div>
+            </div>
+            {/* Arrange */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col items-center">
+                <div className="flex items-center gap-0.5">
+                  <button onClick={() => selectedElementKey && handleLockToggle(selectedElementKey)} disabled={!selectedElementKey}
+                    title="Lock / Unlock selected layer" className={ribbonBtn}>
+                    {(selIsCertNo ? event.certNoConfig.isLocked : selIsQr ? event.qrConfig.isLocked : selectedField?.isLocked)
+                      ? <Lock size={16} /> : <Unlock size={16} />}
+                    <span className={ribbonLabel}>Lock</span>
+                  </button>
+                  <button onClick={() => selectedElementKey && handleVisibilityToggle(selectedElementKey)} disabled={!selectedElementKey}
+                    title="Show / Hide selected layer" className={ribbonBtn}>
+                    {(selIsCertNo ? event.certNoConfig.visible : selIsQr ? event.qrConfig.visible : (selectedField?.visible ?? true))
+                      ? <Eye size={16} /> : <EyeOff size={16} />}
+                    <span className={ribbonLabel}>Show</span>
+                  </button>
+                  <button onClick={() => setSelectedElementKey(null)} disabled={!selectedElementKey} title="Deselect (Esc)" className={ribbonBtn}>
+                    <X size={16} /><span className={ribbonLabel}>Clear</span>
+                  </button>
+                </div>
+                <span className={ribbonGroupTitle}>Arrange</span>
               </div>
             </div>
           </div>
         </div>
       )}
-
-      {/* Live Edit Preview — selected layer ka actual text, bara + proper distance par */}
-      {!readOnly && selectedElementKey && (
-        <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3">
-          <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider mb-1">
-            Live Preview — {selectedElementKey === '__cert_no__' ? 'Certificate No' : selectedElementKey === '__qr_code__' ? 'QR Code' : (selectedField?.label || selectedElementKey)}
-          </p>
-          {selectedElementKey === '__qr_code__' ? (
-            <div className="inline-block bg-white p-1.5 rounded-lg border border-amber-200">
-              <QRCodeSVG value={getQrVerificationUrl()} size={64} level="M" />
+      {/* ═══════════ RIBBON — INSERT ═══════════ */}
+      {!readOnly && activeTab === 'Insert' && (
+        <div className="bg-slate-100/80 border-b border-slate-200 px-2 py-1.5">
+          <div className="flex flex-wrap items-stretch gap-y-1">
+            {/* Find field */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col items-center">
+                <div className="relative">
+                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={traySearch}
+                    onChange={(e) => setTraySearch(e.target.value)}
+                    placeholder="Search Excel columns…"
+                    className="w-44 text-[11px] rounded-lg border border-slate-300 bg-white pl-7 pr-2 py-1.5 outline-none focus:ring-2 focus:ring-emerald-600"
+                  />
+                </div>
+                <span className={ribbonGroupTitle}>Find field</span>
+              </div>
             </div>
+            {/* Excel field chips — click to place, drag onto the page */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col">
+                <div className="flex items-center gap-1 max-w-[26rem] overflow-x-auto pb-0.5">
+                  {trayFields.map((f) => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      draggable={!f.isLocked}
+                      onDragStart={(e) => startFieldDrag(e, f.key)}
+                      onClick={() => handleAddField(f.key)}
+                      onKeyDown={(e) => handleTrayKeyNav(e, trayNavKeys)}
+                      title={f.isLocked ? `${f.label} — locked, unlock it in the tray first` : `${f.label} — click to place, or drag onto the certificate`}
+                      className={`shrink-0 max-w-[8rem] truncate px-2 py-1.5 rounded-lg text-[10px] font-bold border transition ${
+                        selectedElementKey === f.key
+                          ? 'bg-emerald-800 text-white border-emerald-800'
+                          : f.isLocked
+                          ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                          : isFieldPlaced(f)
+                          ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:border-emerald-500 cursor-grab'
+                          : 'bg-white text-slate-600 border-slate-300 border-dashed hover:border-emerald-400 cursor-grab'
+                      }`}
+                    >
+                      {f.label}{isFieldPlaced(f) ? ' ↗' : ' +'}
+                    </button>
+                  ))}
+                  {trayFields.length === 0 && (
+                    <span className="text-[11px] text-slate-500 px-1">
+                      {event.fields.length === 0 ? 'Upload Excel/CSV to populate fields…' : `No match for “${traySearch}”.`}
+                    </span>
+                  )}
+                </div>
+                <span className={ribbonGroupTitle}>Excel fields — click to place · drag onto page</span>
+              </div>
+            </div>
+            {/* Special layers */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col items-center">
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    draggable
+                    onDragStart={(e) => startFieldDrag(e, '__cert_no__')}
+                    onClick={() => setSelectedElementKey('__cert_no__')}
+                    title="Certificate No — click to select, drag onto the page"
+                    className={ribbonBtn}
+                  >
+                    <Layers size={16} /><span className={ribbonLabel}>Cert-No</span>
+                  </button>
+                  <button
+                    type="button"
+                    draggable
+                    onDragStart={(e) => startFieldDrag(e, '__qr_code__')}
+                    onClick={() => setSelectedElementKey('__qr_code__')}
+                    title="QR Code — click to select, drag onto the page"
+                    className={ribbonBtn}
+                  >
+                    <Grid3x3 size={16} /><span className={ribbonLabel}>QR Code</span>
+                  </button>
+                </div>
+                <span className={ribbonGroupTitle}>Special</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ═══════════ RIBBON — VIEW ═══════════ */}
+      {!readOnly && activeTab === 'View' && (
+        <div className="bg-slate-100/80 border-b border-slate-200 px-2 py-1.5">
+          <div className="flex flex-wrap items-stretch gap-y-1">
+            {/* Zoom */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col items-center">
+                <div className="flex items-center gap-0.5">
+                  <button onClick={handleZoomOut} title="Zoom out" className={ribbonBtn}>
+                    <ZoomOut size={16} /><span className={ribbonLabel}>Out</span>
+                  </button>
+                  <button onClick={handleZoomReset} title="Reset zoom to 100%"
+                    className="text-[11px] font-mono font-bold text-slate-700 w-12 text-center hover:text-emerald-800 cursor-pointer rounded-md hover:bg-white">
+                    {Math.round(zoomLevel * 100)}%
+                  </button>
+                  <button onClick={handleZoomIn} title="Zoom in" className={ribbonBtn}>
+                    <ZoomIn size={16} /><span className={ribbonLabel}>In</span>
+                  </button>
+                </div>
+                <span className={ribbonGroupTitle}>Zoom</span>
+              </div>
+            </div>
+            {/* Guides */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col items-center">
+                <div className="flex items-center gap-0.5">
+                  <button onClick={() => setShowGrid(!showGrid)} title="Show alignment grid + centre guides"
+                    className={showGrid ? ribbonBtnActive : ribbonBtn}>
+                    <Grid3x3 size={16} /><span className={ribbonLabel}>Grid</span>
+                  </button>
+                  <button onClick={() => setSnapToGrid(!snapToGrid)} title="Snap to grid (5% steps) — while dragging and dropping"
+                    className={snapToGrid ? ribbonBtnActive : ribbonBtn}>
+                    <MousePointer2 size={16} /><span className={ribbonLabel}>Snap</span>
+                  </button>
+                  <button onClick={() => setShowRulers((v) => !v)} title="Toggle rulers on the page edges"
+                    className={showRulers ? ribbonBtnActive : ribbonBtn}>
+                    <Ruler size={16} /><span className={ribbonLabel}>Ruler</span>
+                  </button>
+                </div>
+                <span className={ribbonGroupTitle}>Guides</span>
+              </div>
+            </div>
+            {/* Layers lock-all */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col items-center">
+                <div className="flex items-center gap-1 px-1">
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${allLocked ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                    {allLocked ? '🔒 All locked' : '🔓 Editable'}
+                  </span>
+                  <button onClick={handleLockAxisAll} title="Lock every layer" className={ribbonBtn}>
+                    <Lock size={16} /><span className={ribbonLabel}>Lock all</span>
+                  </button>
+                  <button onClick={handleUnlockAxisAll} title="Unlock every layer" className={ribbonBtn}>
+                    <Unlock size={16} /><span className={ribbonLabel}>Unlock</span>
+                  </button>
+                </div>
+                <span className={ribbonGroupTitle}>Layers</span>
+              </div>
+            </div>
+            {/* Keyboard help */}
+            <div className={ribbonGroup}>
+              <div className="flex flex-col items-center">
+                <div className="group relative">
+                  <button className="flex items-center justify-center w-7 h-7 rounded-lg bg-white border border-slate-300 text-slate-500 hover:bg-slate-50 cursor-pointer text-xs font-bold" title="Keyboard shortcuts">
+                    ?
+                  </button>
+                  <div className="absolute left-0 top-full mt-2 w-72 bg-slate-900 text-white text-[11px] rounded-xl p-4 shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                    <p className="font-bold mb-2 text-amber-400">Keyboard Shortcuts</p>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between"><span>Undo / Redo</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Ctrl+Z / Shift+Z</kbd></div>
+                      <div className="flex justify-between"><span>Duplicate field</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Ctrl+D</kbd></div>
+                      <div className="flex justify-between"><span>Delete field</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Del</kbd></div>
+                      <div className="flex justify-between"><span>Move (1%)</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">↑↓←→</kbd></div>
+                      <div className="flex justify-between"><span>Move (0.1%)</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">Shift+↑↓</kbd></div>
+                      <div className="flex justify-between"><span>Tray navigation</span><kbd className="bg-slate-700 px-2 py-0.5 rounded font-mono">↑↓ + Enter</kbd></div>
+                    </div>
+                  </div>
+                </div>
+                <span className={ribbonGroupTitle}>Help</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ═══════════ SELECTION BAR (contextual — Word style) ═══════════ */}
+      {!readOnly && selectedElementKey && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 bg-white border-b border-slate-200 px-3 py-1.5">
+          <span className="text-[10px] font-bold text-emerald-900 uppercase tracking-wider flex items-center gap-1">
+            <Layers size={11} /> {selLabel}
+          </span>
+          {selIsQr ? (
+            <span className="inline-block bg-white p-1 rounded-md border border-slate-200">
+              <QRCodeSVG value={getQrVerificationUrl()} size={40} level="M" />
+            </span>
           ) : (
-            <p
-              className="break-words"
+            <span
+              className="min-w-0 flex-1 truncate text-sm text-slate-700"
               style={{
-                fontFamily: selectedElementKey === '__cert_no__'
-                  ? (event.certNoConfig.fontFamily || 'Georgia, serif')
-                  : (selectedField?.fontFamily ?? 'Georgia, serif'),
-                fontSize: `${Math.min(34, Math.max(16, selectedElementKey === '__cert_no__' ? event.certNoConfig.fontSize : (selectedField?.fontSize ?? 16)))}px`,
-                fontWeight: (selectedElementKey === '__cert_no__' ? event.certNoConfig.isBold : selectedField?.isBold) ? 700 : 400,
+                fontFamily: selIsCertNo ? (event.certNoConfig.fontFamily || 'Georgia, serif') : (selectedField?.fontFamily ?? 'Georgia, serif'),
+                fontWeight: (selIsCertNo ? event.certNoConfig.isBold : selectedField?.isBold) ? 700 : 400,
                 fontStyle: selectedField?.isItalic ? 'italic' : 'normal',
                 letterSpacing: `${selectedField?.letterSpacing ?? 0}px`,
                 textTransform: selectedField?.isUppercase ? 'uppercase' : 'none',
-                textAlign: (selectedField?.align as any) || 'left',
-                color: selectedElementKey === '__cert_no__' ? event.certNoConfig.color : (selectedField?.color ?? '#111827'),
-                lineHeight: selectedField?.lineHeight ?? 1.4,
+                color: selIsCertNo ? event.certNoConfig.color : (selectedField?.color ?? '#111827'),
               }}
             >
-              {selectedElementKey === '__cert_no__'
+              {selIsCertNo
                 ? cert.certificate_no
-                : (selectedField ? (getProcessedText(getFieldValue(selectedField), selectedField) || `(${selectedField.label} — is record me khali)`) : '')}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Zoom + Lock Controls */}
-      <div className="absolute top-3 right-3 z-20 flex items-center gap-1 bg-white/90 backdrop-blur-sm rounded-xl shadow border border-gray-200 p-1">
-        <button onClick={handleZoomOut} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"><ZoomOut size={15} /></button>
-        <span className="text-[11px] font-mono font-bold text-slate-700 w-10 text-center">{Math.round(zoomLevel * 100)}%</span>
-        <button onClick={handleZoomIn} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"><ZoomIn size={15} /></button>
-      </div>
-      {!readOnly && (
-        <div className="absolute top-3 left-3 z-20 flex items-center gap-2 bg-white/90 backdrop-blur-sm rounded-xl shadow border border-gray-200 px-3 py-1.5">
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${event.fields.every(f => f.isLocked) && event.qrConfig.isLocked && event.certNoConfig.isLocked ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-            {event.fields.every(f => f.isLocked) && event.qrConfig.isLocked && event.certNoConfig.isLocked ? '🔒 Locked' : '🔓 Unlocked'}
-          </span>
-          <button onClick={handleLockAxisAll} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200 cursor-pointer">
-            <Lock size={12} /> Lock All
-          </button>
-          <button onClick={handleUnlockAxisAll} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 cursor-pointer">
-            <Unlock size={12} /> Unlock All
-          </button>
-        </div>
-      )}
-
-      {/* Inspector Ribbon (canvas ke UPAR docked — editing ab proper distance par dikhegi) */}
-      {!readOnly && selectedElementKey && (
-        <div className="relative z-20 bg-white rounded-2xl shadow border border-gray-200 p-3 mb-3 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-              Inspector — {selectedElementKey === '__cert_no__' ? 'Certificate No' : selectedElementKey === '__qr_code__' ? 'QR Code' : (selectedField?.label || selectedElementKey)}
+                : (selectedField ? (getProcessedText(getFieldValue(selectedField), selectedField) || `(${selectedField.label} — empty in this record)`) : '')}
             </span>
-            <button onClick={() => setSelectedElementKey(null)} className="text-slate-400 hover:text-slate-700 cursor-pointer"><X size={14} /></button>
-          </div>
-
-          {selectedElementKey !== '__qr_code__' && (
-            <div className="flex items-center gap-2">
-              <Type size={13} className="text-slate-400 shrink-0" />
-              <select
-                value={selectedElementKey === '__cert_no__' ? (event.certNoConfig.fontFamily || 'Georgia, serif') : (selectedField?.fontFamily ?? 'Georgia, serif')}
-                onChange={(e) => handleFontFamilyChange(selectedElementKey!, e.target.value)}
-                className="flex-1 text-[11px] rounded-lg border border-gray-200 bg-white px-2 py-1.5 cursor-pointer"
-              >
-                {CERT_FONTS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-              </select>
-            </div>
           )}
-
-          {selectedElementKey !== '__qr_code__' && (
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-slate-400 w-10 shrink-0">Size</span>
-              <input
-                type="number" min={6} max={120}
-                value={selectedElementKey === '__cert_no__' ? event.certNoConfig.fontSize : (selectedField?.fontSize ?? 14)}
-                onChange={(e) => handleFontSizeChange(selectedElementKey!, Number(e.target.value))}
-                className="w-16 text-[11px] rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-right cursor-pointer"
-              />
+          <button onClick={() => setSelectedElementKey(null)} className="ml-auto text-slate-400 hover:text-slate-700 cursor-pointer" title="Deselect">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {/* ═══════════ WORD BODY: left tray + page ═══════════ */}
+      <div className={`flex items-stretch gap-2 ${readOnly ? '' : 'p-2'}`}>
+        {/* LEFT TRAY — Excel fields (click to place / drag onto the page) */}
+        {!readOnly && (
+          <aside className="hidden md:flex w-44 shrink-0 flex-col rounded-xl border border-slate-200 bg-white overflow-hidden">
+            <div className="px-2.5 pt-2 pb-1.5 border-b border-slate-100">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Excel Fields</p>
+              <div className="relative mt-1.5">
+                <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={traySearch}
+                  onChange={(e) => setTraySearch(e.target.value)}
+                  placeholder="Search…"
+                  className="w-full text-[11px] rounded-lg border border-slate-200 bg-slate-50 pl-7 pr-2 py-1.5 outline-none focus:ring-2 focus:ring-emerald-600 focus:bg-white"
+                />
+              </div>
             </div>
-          )}
-
-          {selectedElementKey !== '__qr_code__' && (
-            <div className="flex items-center gap-2">
-              <Palette size={13} className="text-slate-400 shrink-0" />
-              <input
-                type="color"
-                value={selectedElementKey === '__cert_no__' ? event.certNoConfig.color : (selectedField?.color ?? '#111827')}
-                onChange={(e) => handleColorChange(selectedElementKey!, e.target.value)}
-                className="w-8 h-7 rounded border border-gray-200 cursor-pointer bg-white p-0.5"
-              />
-              <span className="text-[11px] font-mono text-slate-600">{selectedElementKey === '__cert_no__' ? event.certNoConfig.color : (selectedField?.color ?? '#111827')}</span>
-            </div>
-          )}
-
-          {selectedElementKey !== '__qr_code__' && (
-            <div className="flex items-center gap-1 flex-wrap">
-              <button onClick={() => handleToggleBold(selectedElementKey!)} className={`p-1.5 rounded-lg ${selectedElementKey === '__cert_no__' ? (event.certNoConfig.isBold ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100') : (selectedField?.isBold ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100')} cursor-pointer`}>
-                <Bold size={15} />
-              </button>
-              <button onClick={() => handleToggleItalic(selectedElementKey!)} disabled={selectedElementKey === '__cert_no__'} className={`p-1.5 rounded-lg disabled:opacity-30 ${selectedField?.isItalic ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100'} cursor-pointer`}>
-                <Italic size={15} />
-              </button>
-              <button onClick={() => handleToggleUppercase(selectedElementKey!)} disabled={selectedElementKey === '__cert_no__'} className={`p-1.5 rounded-lg disabled:opacity-30 ${selectedField?.isUppercase ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100'} cursor-pointer`}>
-                <span className="text-[11px] font-bold">AA</span>
-              </button>
-              <div className="w-px h-5 bg-gray-200 mx-1" />
-              {(['left', 'center', 'right'] as const).map(a => (
-                <button key={a} onClick={() => handleAlignChange(selectedElementKey!, a)} disabled={selectedElementKey === '__cert_no__'} className={`p-1.5 rounded-lg disabled:opacity-30 ${selectedField?.align === a ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100'} cursor-pointer`} title={a}>
-                  {a === 'left' ? <AlignLeft size={15} /> : a === 'center' ? <AlignCenter size={15} /> : <AlignRight size={15} />}
+            <div
+              className="flex-1 overflow-y-auto p-1.5 space-y-1 max-h-[32rem]"
+              onKeyDown={(e) => handleTrayKeyNav(e, trayNavKeys)}
+              role="listbox"
+              aria-label="Excel fields"
+            >
+              {trayFields.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedElementKey === f.key}
+                  draggable={!f.isLocked}
+                  onDragStart={(e) => startFieldDrag(e, f.key)}
+                  onClick={() => handleAddField(f.key)}
+                  title={f.isLocked ? `${f.label} — locked` : `${f.label} — click to place, drag onto page`}
+                  className={`w-full text-left truncate px-2 py-1.5 rounded-lg text-[11px] font-semibold border transition ${
+                    selectedElementKey === f.key
+                      ? 'bg-emerald-800 text-white border-emerald-800'
+                      : f.isLocked
+                      ? 'bg-slate-50 text-slate-400 border-slate-100 cursor-not-allowed'
+                      : isFieldPlaced(f)
+                      ? 'bg-emerald-50 text-emerald-900 border-emerald-200 hover:border-emerald-400 cursor-grab'
+                      : 'bg-white text-slate-600 border-dashed border-slate-300 hover:border-emerald-400 cursor-grab'
+                  }`}
+                >
+                  {f.label}{isFieldPlaced(f) ? ' ↗' : ' +'}{f.isLocked ? ' 🔒' : ''}
                 </button>
               ))}
+              {trayFields.length === 0 && (
+                <p className="text-[11px] text-slate-400 px-1 py-2">
+                  {event.fields.length === 0 ? 'Upload Excel/CSV to populate fields.' : `No match for “${traySearch}”.`}
+                </p>
+              )}
             </div>
-          )}
-
-          {selectedField && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400 w-10 shrink-0">Width</span>
-                <input type="range" min={0} max={100} value={getFieldWidthPercent(selectedField.maxWidth)} onChange={(e) => handleMaxWidthChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
-                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{getFieldWidthPercent(selectedField.maxWidth)}%</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400 w-10 shrink-0">LHeight</span>
-                <input type="range" min={0.8} max={3} step={0.1} value={selectedField.lineHeight} onChange={(e) => handleLineHeightChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
-                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{selectedField.lineHeight.toFixed(1)}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400 w-10 shrink-0">MaxLines</span>
-                <input type="number" min={1} max={10} value={selectedField.maxLines ?? 1} onChange={(e) => handleMaxLinesChange(selectedElementKey!, Number(e.target.value))} className="w-14 text-[11px] rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-center cursor-pointer" />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400 w-10 shrink-0">Spacing</span>
-                <input type="range" min={-5} max={10} step={0.5} value={selectedField.letterSpacing ?? 0} onChange={(e) => handleLetterSpacingChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
-                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{(selectedField.letterSpacing ?? 0).toFixed(1)}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400 w-10 shrink-0">Rotate</span>
-                <input type="range" min={-90} max={90} value={selectedField.rotation ?? 0} onChange={(e) => handleRotationChange(selectedElementKey!, Number(e.target.value))} className="flex-1 cursor-pointer" />
-                <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{(selectedField.rotation ?? 0).toFixed(0)}°</span>
-              </div>
-            </div>
-          )}
-
-          {/* Lock + Visibility + Duplicate */}
-          <div className="border-t border-gray-100 pt-1.5 flex items-center gap-1">
-            <button
-              onClick={() => handleLockToggle(selectedElementKey!)}
-              className={`p-1.5 rounded-lg ${(selectedElementKey === '__cert_no__' ? event.certNoConfig.isLocked : selectedElementKey === '__qr_code__' ? event.qrConfig.isLocked : selectedField?.isLocked) ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-100'} cursor-pointer`}
-              title="Lock / Unlock"
-            >
-              {(selectedElementKey === '__cert_no__' ? event.certNoConfig.isLocked : selectedElementKey === '__qr_code__' ? event.qrConfig.isLocked : selectedField?.isLocked) ? <Lock size={14} /> : <Unlock size={14} />}
-            </button>
-            <button
-              onClick={() => handleVisibilityToggle(selectedElementKey!)}
-              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 cursor-pointer"
-              title="Show / Hide"
-            >
-              {(selectedElementKey === '__cert_no__' ? event.certNoConfig.visible : selectedElementKey === '__qr_code__' ? event.qrConfig.visible : (selectedField?.visible ?? true)) ? <Eye size={14} /> : <EyeOff size={14} />}
-            </button>
-            {/* NEW: Duplicate Button (only for dynamic fields) */}
-            {selectedElementKey !== '__cert_no__' && selectedElementKey !== '__qr_code__' && (
+            <div className="border-t border-slate-100 p-1.5 grid grid-cols-2 gap-1">
               <button
-                onClick={handleDuplicateField}
-                className="p-1.5 rounded-lg text-slate-600 hover:bg-emerald-100 hover:text-emerald-700 cursor-pointer"
-                title="Duplicate field (Ctrl+D)"
-              >
-                <Copy size={14} />
-              </button>
-            )}
-            {/* NEW: Delete Button (only for dynamic fields) */}
-            {selectedElementKey !== '__cert_no__' && selectedElementKey !== '__qr_code__' && !selectedField?.isLocked && (
-              <button
-                onClick={handleDeleteField}
-                className="p-1.5 rounded-lg text-slate-600 hover:bg-rose-100 hover:text-rose-700 cursor-pointer"
-                title="Delete field (Del)"
-              >
-                <Trash2 size={14} />
-              </button>
-            )}
-            <span className="text-[10px] ml-auto text-slate-400">Drag = move</span>
-          </div>
-        </div>
-      )}
-      {/* Certificate Surface */}
-      <div className="w-full overflow-auto rounded-2xl border border-gray-200 bg-slate-100 p-3">
-        <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center' }} className="mx-auto w-fit transition-transform">
-          <div
-            ref={containerRef}
-            onClick={() => { if (!readOnly) setSelectedElementKey(null); }}
-            onDragOver={(e) => {
-              const isFieldDrag = Array.from(e.dataTransfer.types).includes('application/x-skuastk-certificate-field');
-              if (readOnly || !isFieldDrag) return;
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-            }}
-            onDrop={(e) => {
-              const key = e.dataTransfer.getData('application/x-skuastk-certificate-field');
-              if (readOnly || !key) return;
-              e.preventDefault();
-              e.stopPropagation();
-              placeFieldFromDrop(key, e.clientX, e.clientY);
-            }}
-            className="relative bg-white shadow-lg overflow-hidden select-none"
-            style={{ width: '1123px', maxWidth: '100%', aspectRatio: '1.414 / 1' }}
-          >
-            {/* Added select-none only to canvas - inspector panel allows text selection */}
-            {/* NEW: Grid Overlay for alignment */}
-            {showGrid && !readOnly && (
-              <div className="absolute inset-0 z-10 pointer-events-none" style={{
-                backgroundImage: `
-                  linear-gradient(to right, rgba(59, 130, 246, 0.3) 1px, transparent 1px),
-                  linear-gradient(to bottom, rgba(59, 130, 246, 0.3) 1px, transparent 1px)
-                `,
-                backgroundSize: '5% 5%'
-              }} />
-            )}
-            {/* NEW: Center alignment guides */}
-            {showGrid && !readOnly && (
-              <>
-                <div className="absolute inset-y-0 left-1/2 w-px bg-rose-400/50 z-10 pointer-events-none" />
-                <div className="absolute inset-x-0 top-1/2 h-px bg-rose-400/50 z-10 pointer-events-none" />
-              </>
-            )}
-            {event.templateUrl ? (
-              <img src={event.templateUrl} alt="Certificate template" className="absolute inset-0 w-full h-full object-fill" draggable={false} crossOrigin="anonymous" />
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-50">
-                <p className="text-xs text-slate-400">Upload a template to preview the design</p>
-              </div>
-            )}
-            {event.fields.filter(f => f.visible && isFieldPlaced(f)).map(field => {
-              // Resolve the stored source reference against the active row only while rendering.
-              const raw = getFieldValue(field);
-              // Khali value par admin ko layer dikhe (placeholder), taaki select/edit ho sake.
-              // Export/PDF me placeholder nahi jayega — waha raw empty = render skip (neeche).
-              const isEmpty = !raw;
-              const text = isEmpty ? `[${field.label}]` : getProcessedText(raw, field);
-              const isSel = selectedElementKey === field.key;
-              const locked = !!field.isLocked;
-              return (
-                <div
-                  key={field.key}
-                  onMouseDown={(e) => handleMouseDown(field.key, e)}
-                  className={`absolute ${readOnly ? '' : locked ? 'cursor-not-allowed' : 'cursor-move'} ${isSel && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''} ${isEmpty && !readOnly ? 'outline outline-1 outline-dashed outline-slate-300 rounded' : ''}`}
-                  style={{
-                    left: `${field.x}%`, top: `${field.y}%`,
-                    // Tight hit-box: box text ke content jitna hi ho (maxWidth cap ke saath),
-                    // taaki click karne par poora 60% chauda invisible box select na ho.
-                    // inline-block + maxWidth se chhota text = chhota selectable area.
-                    // Khali placeholder par min-width taaki khaali field bhi pakdi ja sake.
-                    display: (field.maxLines ?? 1) > 1 ? '-webkit-box' : 'inline-block',
-                    width: (field.maxLines ?? 1) > 1 ? `${getFieldWidthPercent(field.maxWidth)}%` : 'fit-content',
-                    maxWidth: `${getFieldWidthPercent(field.maxWidth)}%`,
-                    minWidth: isEmpty && !readOnly ? '3rem' : undefined,
-                    transform: `translate(-50%, -50%) rotate(${field.rotation ?? 0}deg)`,
-                    textAlign: field.align, color: isEmpty ? '#94a3b8' : field.color, fontFamily: field.fontFamily,
-                    fontSize: `${field.fontSize}px`, fontWeight: field.isBold ? 700 : 400,
-                    fontStyle: field.isItalic ? 'italic' : 'normal',
-                    // Single-line fields hug the text tightly (no extra leading that would
-                    // make the selection box taller than the glyphs); multi-line fields keep
-                    // their configured line spacing. Applied in every mode so editor == export.
-                    lineHeight: (field.maxLines ?? 1) > 1 ? field.lineHeight : 1.2,
-                    letterSpacing: `${field.letterSpacing ?? 0}px`,
-                    wordBreak: 'break-word', overflow: 'hidden',
-                    WebkitLineClamp: field.maxLines ?? 1,
-                    WebkitBoxOrient: 'vertical' as const, userSelect: 'none',
-                    opacity: isEmpty && readOnly ? 0 : 1,
-                  }}
-                  title={readOnly ? field.label : locked ? `${field.label} — locked (unlock to edit)` : `${field.label} — drag to position`}
-                >
-                  {!isEmpty ? text : ''}
-                </div>
-              );
-            })}
-            {event.certNoConfig.visible && (
-              <div
-                onMouseDown={(e) => handleMouseDown('__cert_no__', e)}
-                className={`absolute ${readOnly ? '' : 'cursor-move'} ${selectedElementKey === '__cert_no__' && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''}`}
-                style={{
-                  left: `${event.certNoConfig.x}%`, top: `${event.certNoConfig.y}%`,
-                  transform: 'translate(-50%, -50%)', color: event.certNoConfig.color,
-                  fontFamily: event.certNoConfig.fontFamily || 'Georgia, serif',
-                  fontSize: `${event.certNoConfig.fontSize}px`,
-                  fontWeight: event.certNoConfig.isBold ? 700 : 400, userSelect: 'none',
-                }}
-                title={readOnly ? 'Certificate No' : 'Certificate No — drag to position'}
-              >
-                {cert.certificate_no}
-              </div>
-            )}
-            {event.qrConfig.visible && (
-              <div
-                onMouseDown={(e) => handleMouseDown('__qr_code__', e)}
-                className={`absolute ${readOnly ? '' : 'cursor-move'} ${selectedElementKey === '__qr_code__' && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''}`}
-                style={{
-                  left: `${event.qrConfig.x}%`, top: `${event.qrConfig.y}%`,
-                  transform: 'translate(-50%, -50%)',
-                  width: `${event.qrConfig.size}px`, height: `${event.qrConfig.size}px`,
-                  background: '#fff', padding: '4px', userSelect: 'none',
-                }}
-                title={readOnly ? 'QR Code' : 'QR Code — drag to position'}
-              >
-                <QRCodeSVG value={getQrVerificationUrl()} size={event.qrConfig.size - 8} level="M" />
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-      {/* Dynamic fields detected from the uploaded sheet */}
-      {!readOnly && (
-        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-3">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Dynamic Data Fields</span>
-            <span className="text-[10px] text-slate-500">Drag a field onto the certificate</span>
-          </div>
-          <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-            {event.fields.map((field) => (
-              <button
-                key={field.key}
                 type="button"
-                draggable={!field.isLocked}
-                onDragStart={(e) => {
-                  e.stopPropagation();
-                  e.dataTransfer.effectAllowed = 'move';
-                  e.dataTransfer.setData('application/x-skuastk-certificate-field', field.key);
-                  e.dataTransfer.setData('text/plain', field.key);
-                }}
-                onClick={() => setSelectedElementKey(field.key)}
-                title={field.isLocked ? `${field.label} — locked, unlock first` : `${field.label} — drag onto the certificate`}
-                className={`max-w-full break-words px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-grab active:cursor-grabbing ${
-                  selectedElementKey === field.key
-                    ? 'bg-emerald-800 text-white border-emerald-800'
-                    : 'bg-white text-slate-600 border-gray-200 hover:border-emerald-300'
-                } ${field.isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                draggable
+                onDragStart={(e) => startFieldDrag(e, '__cert_no__')}
+                onClick={() => setSelectedElementKey('__cert_no__')}
+                title="Cert-No — drag onto the page"
+                className={`px-1.5 py-1.5 rounded-lg text-[10px] font-bold border cursor-grab ${selIsCertNo ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'}`}
               >
-                {field.label}{isFieldPlaced(field) ? ' ↗' : ''}{field.isLocked ? ' 🔒' : ''}
+                № Cert-No
               </button>
-            ))}
-            {event.fields.length === 0 && (
-              <span className="text-[11px] text-slate-500">Upload Excel/CSV to populate dynamic fields.</span>
-            )}
-          </div>
-        </div>
-      )}
-      {/* Existing layer selector; dynamic palette above keeps uploaded fields separate. */}
-      {!readOnly && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          <button
-            onClick={() => setSelectedElementKey('__cert_no__')}
-            className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${selectedElementKey === '__cert_no__' ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-white text-slate-600 border-gray-200 hover:border-emerald-300'}`}
-          >
-            Cert-No{event.certNoConfig.isLocked ? ' 🔒' : ''}
-          </button>
-          <button
-            onClick={() => setSelectedElementKey('__qr_code__')}
-            className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${selectedElementKey === '__qr_code__' ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-white text-slate-600 border-gray-200 hover:border-emerald-300'}`}
-          >
-            QR{event.qrConfig.isLocked ? ' 🔒' : ''}
-          </button>
-        </div>
-      )}
-      {/* QR Size + Export */}
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {!readOnly && (
-          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-1.5">
-            <span className="text-[10px] font-bold text-slate-500">QR Size</span>
-            <input
-              type="range" min={40} max={220} value={event.qrConfig.size}
-              onChange={(e) => onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, size: Number(e.target.value) } })}
-              className="w-24 cursor-pointer"
-            />
-            <span className="text-[10px] font-mono text-slate-600">{event.qrConfig.size}px</span>
-          </div>
+              <button
+                type="button"
+                draggable
+                onDragStart={(e) => startFieldDrag(e, '__qr_code__')}
+                onClick={() => setSelectedElementKey('__qr_code__')}
+                title="QR — drag onto the page"
+                className={`px-1.5 py-1.5 rounded-lg text-[10px] font-bold border cursor-grab ${selIsQr ? 'bg-emerald-800 text-white border-emerald-800' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'}`}
+              >
+                ▦ QR
+              </button>
+            </div>
+          </aside>
         )}
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={() => handleExportCanvas('png')}
-            disabled={isExporting}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold shadow transition cursor-pointer disabled:opacity-50"
-          >
-            {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} PNG
-          </button>
-          <button
-            onClick={() => handleExportCanvas('pdf')}
-            disabled={isExporting}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold shadow transition cursor-pointer disabled:opacity-50"
-          >
-            {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Official PDF
-          </button>
+        {/* PAGE COLUMN: rulers + certificate surface */}
+        <div className={`relative ${dropHover && !readOnly ? 'ring-2 ring-emerald-400 rounded-xl' : ''} ${readOnly ? 'w-full' : 'flex-1 min-w-0'}`}>
+          {/* Quick zoom pill (canvas par, dono modes me) */}
+          <div className="absolute top-2 right-2 z-30 flex items-center gap-0.5 bg-white/95 backdrop-blur-sm rounded-lg shadow border border-slate-200 p-0.5">
+            <button onClick={handleZoomOut} className="p-1 rounded-md hover:bg-slate-100 text-slate-600 cursor-pointer" title="Zoom out"><Minus size={13} /></button>
+            <button onClick={handleZoomReset} className="text-[10px] font-mono font-bold text-slate-700 w-9 text-center hover:text-emerald-800 cursor-pointer" title="Reset zoom to 100%">{Math.round(zoomLevel * 100)}%</button>
+            <button onClick={handleZoomIn} className="p-1 rounded-md hover:bg-slate-100 text-slate-600 cursor-pointer" title="Zoom in"><Plus size={13} /></button>
+          </div>
+          <div className="flex gap-1 items-start">
+            {showRulers && !readOnly && (
+              <div
+                className="w-4 self-stretch min-h-[12rem] rounded bg-white border border-slate-200 shrink-0"
+                style={{ backgroundImage: 'repeating-linear-gradient(to bottom, #94a3b8 0, #94a3b8 1px, transparent 1px, transparent 10%)' }}
+                aria-hidden="true"
+              />
+            )}
+            <div className="flex-1 min-w-0">
+              {showRulers && !readOnly && (
+                <div
+                  className="h-4 mb-1 rounded bg-white border border-slate-200"
+                  style={{ backgroundImage: 'repeating-linear-gradient(to right, #94a3b8 0, #94a3b8 1px, transparent 1px, transparent 5%)' }}
+                  aria-hidden="true"
+                />
+              )}
+              {/* Certificate Surface */}
+              <div className="w-full overflow-auto rounded-2xl border border-gray-200 bg-slate-100 p-3">
+                <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center' }} className="mx-auto w-fit transition-transform">
+                  <div
+                    ref={containerRef}
+                    onClick={() => { if (!readOnly) setSelectedElementKey(null); }}
+                    onDragOver={(e) => {
+                      const isFieldDrag = Array.from(e.dataTransfer.types).includes('application/x-skuastk-certificate-field');
+                      if (readOnly || !isFieldDrag) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      setDropHover(true);
+                    }}
+                    onDragLeave={(e) => {
+                      if (readOnly) return;
+                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropHover(false);
+                    }}
+                    onDrop={(e) => {
+                      const key = e.dataTransfer.getData('application/x-skuastk-certificate-field');
+                      setDropHover(false);
+                      if (readOnly || !key) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      placeFieldFromDrop(key, e.clientX, e.clientY);
+                    }}
+                    className="relative bg-white shadow-lg overflow-hidden select-none"
+                    style={{ width: '1123px', maxWidth: '100%', aspectRatio: '1.414 / 1' }}
+                  >
+                    {/* Added select-none only to canvas - inspector panel allows text selection */}
+                    {/* NEW: Grid Overlay for alignment */}
+                    {showGrid && !readOnly && (
+                      <div className="absolute inset-0 z-10 pointer-events-none" style={{
+                        backgroundImage: `
+                          linear-gradient(to right, rgba(59, 130, 246, 0.3) 1px, transparent 1px),
+                          linear-gradient(to bottom, rgba(59, 130, 246, 0.3) 1px, transparent 1px)
+                        `,
+                        backgroundSize: '5% 5%'
+                      }} />
+                    )}
+                    {/* NEW: Center alignment guides */}
+                    {showGrid && !readOnly && (
+                      <>
+                        <div className="absolute inset-y-0 left-1/2 w-px bg-rose-400/50 z-10 pointer-events-none" />
+                        <div className="absolute inset-x-0 top-1/2 h-px bg-rose-400/50 z-10 pointer-events-none" />
+                      </>
+                    )}
+                    {event.templateUrl ? (
+                      <img src={event.templateUrl} alt="Certificate template" className="absolute inset-0 w-full h-full object-fill" draggable={false} crossOrigin="anonymous" />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center bg-slate-50">
+                        <p className="text-xs text-slate-400">Upload a template to preview the design</p>
+                      </div>
+                    )}
+                    {event.fields.filter(f => f.visible && isFieldPlaced(f)).map(field => {
+                      // Resolve the stored source reference against the active row only while rendering.
+                      const raw = getFieldValue(field);
+                      // Khali value par admin ko layer dikhe (placeholder), taaki select/edit ho sake.
+                      // Export/PDF me placeholder nahi jayega — waha raw empty = render skip (neeche).
+                      const isEmpty = !raw;
+                      const text = isEmpty ? `[${field.label}]` : getProcessedText(raw, field);
+                      const isSel = selectedElementKey === field.key;
+                      const locked = !!field.isLocked;
+                      return (
+                        <div
+                          key={field.key}
+                          onMouseDown={(e) => handleMouseDown(field.key, e)}
+                          className={`absolute ${readOnly ? '' : locked ? 'cursor-not-allowed' : 'cursor-move'} ${isSel && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''} ${isEmpty && !readOnly ? 'outline outline-1 outline-dashed outline-slate-300 rounded' : ''}`}
+                          style={{
+                            left: `${field.x}%`, top: `${field.y}%`,
+                            // Tight hit-box: box text ke content jitna hi ho (maxWidth cap ke saath),
+                            // taaki click karne par poora 60% chauda invisible box select na ho.
+                            // inline-block + maxWidth se chhota text = chhota selectable area.
+                            // Khali placeholder par min-width taaki khaali field bhi pakdi ja sake.
+                            display: (field.maxLines ?? 1) > 1 ? '-webkit-box' : 'inline-block',
+                            width: (field.maxLines ?? 1) > 1 ? `${getFieldWidthPercent(field.maxWidth)}%` : 'fit-content',
+                            maxWidth: `${getFieldWidthPercent(field.maxWidth)}%`,
+                            minWidth: isEmpty && !readOnly ? '3rem' : undefined,
+                            transform: `translate(-50%, -50%) rotate(${field.rotation ?? 0}deg)`,
+                            textAlign: field.align, color: isEmpty ? '#94a3b8' : field.color, fontFamily: field.fontFamily,
+                            fontSize: `${field.fontSize}px`, fontWeight: field.isBold ? 700 : 400,
+                            fontStyle: field.isItalic ? 'italic' : 'normal',
+                            // Single-line fields hug the text tightly (no extra leading that would
+                            // make the selection box taller than the glyphs); multi-line fields keep
+                            // their configured line spacing. Applied in every mode so editor == export.
+                            lineHeight: (field.maxLines ?? 1) > 1 ? field.lineHeight : 1.2,
+                            letterSpacing: `${field.letterSpacing ?? 0}px`,
+                            wordBreak: 'break-word', overflow: 'hidden',
+                            WebkitLineClamp: field.maxLines ?? 1,
+                            WebkitBoxOrient: 'vertical' as const, userSelect: 'none',
+                            opacity: isEmpty && readOnly ? 0 : 1,
+                          }}
+                          title={readOnly ? field.label : locked ? `${field.label} — locked (unlock to edit)` : `${field.label} — drag to position`}
+                        >
+                          {!isEmpty ? text : ''}
+                        </div>
+                      );
+                    })}
+                    {event.certNoConfig.visible && (
+                      <div
+                        onMouseDown={(e) => handleMouseDown('__cert_no__', e)}
+                        className={`absolute ${readOnly ? '' : 'cursor-move'} ${selectedElementKey === '__cert_no__' && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''}`}
+                        style={{
+                          left: `${event.certNoConfig.x}%`, top: `${event.certNoConfig.y}%`,
+                          transform: 'translate(-50%, -50%)', color: event.certNoConfig.color,
+                          fontFamily: event.certNoConfig.fontFamily || 'Georgia, serif',
+                          fontSize: `${event.certNoConfig.fontSize}px`,
+                          fontWeight: event.certNoConfig.isBold ? 700 : 400, userSelect: 'none',
+                        }}
+                        title={readOnly ? 'Certificate No' : 'Certificate No — drag to position'}
+                      >
+                        {cert.certificate_no}
+                      </div>
+                    )}
+                    {event.qrConfig.visible && (
+                      <div
+                        onMouseDown={(e) => handleMouseDown('__qr_code__', e)}
+                        className={`absolute ${readOnly ? '' : 'cursor-move'} ${selectedElementKey === '__qr_code__' && !readOnly ? 'ring-2 ring-amber-400 rounded' : ''}`}
+                        style={{
+                          left: `${event.qrConfig.x}%`, top: `${event.qrConfig.y}%`,
+                          transform: 'translate(-50%, -50%)',
+                          width: `${event.qrConfig.size}px`, height: `${event.qrConfig.size}px`,
+                          background: '#fff', padding: '4px', userSelect: 'none',
+                        }}
+                        title={readOnly ? 'QR Code' : 'QR Code — drag to position'}
+                      >
+                        <QRCodeSVG value={getQrVerificationUrl()} size={event.qrConfig.size - 8} level="M" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+            {/* QR Size */}
+            {!readOnly && (
+              <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-1.5">
+                <span className="text-[10px] font-bold text-slate-500">QR Size</span>
+                <input
+                  type="range" min={40} max={220} value={event.qrConfig.size}
+                  onChange={(e) => onUpdateEvent?.({ ...event, qrConfig: { ...event.qrConfig, size: Number(e.target.value) } })}
+                  className="w-24 cursor-pointer"
+                />
+                <span className="text-[10px] font-mono text-slate-600">{event.qrConfig.size}px</span>
+              </div>
+            )}
         </div>
       </div>
     </div>

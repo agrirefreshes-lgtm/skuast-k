@@ -59,3 +59,8 @@ jobs:
           # Keep the deployed branch as a plain static site (skip Jekyll) so
           # Vite's underscore-prefixed asset folders are not stripped.
           enable_jekyll: false
+          # Replace the branch content with exactly this dist/ (orphan commit):
+          # hashed Vite assets change names every build, so a merge-style
+          # publish would pile up stale index-*.js files on gh-pages forever.
+          # Manual `npm run deploy` from a laptop does the same replacement.
+          force_orphan: true
