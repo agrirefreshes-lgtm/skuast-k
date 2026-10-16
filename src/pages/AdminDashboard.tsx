@@ -38,7 +38,9 @@ import {
   KeyRound,
   Users,
   Lock,
-  Unlock
+  Unlock,
+  Ban,
+  RotateCcw
 } from 'lucide-react';
 
 interface AdminProfile {
@@ -46,6 +48,7 @@ interface AdminProfile {
   email: string;
   role: string;
   department: string;
+  is_active?: boolean;
   created_at?: string;
 }
 
@@ -66,6 +69,8 @@ export const AdminDashboard: React.FC = () => {
   const [newAdminPassword, setNewAdminPassword] = useState('');
   const [newAdminDept, setNewAdminDept] = useState('');
   const [creatingAdmin, setCreatingAdmin] = useState(false);
+  // SuperAdmin: kaunsa admin row abhi suspend/remove ho raha hai (per-row spinner)
+  const [adminActionId, setAdminActionId] = useState<string | null>(null);
   const toast = useToast();
   const confirm = useConfirm();
   const prompt = usePrompt();
@@ -154,17 +159,31 @@ export const AdminDashboard: React.FC = () => {
   }, []);
 
   // Load profile + events from a verified session
-  const loadProfile = async (session: any) => {
+  // Returns false sirf jab iska access suspend ho — caller tab isAuthenticated true NA kare
+  const loadProfile = async (session: any): Promise<boolean> => {
     console.log('loadProfile called, session.user.id:', session.user?.id);
     try {
       const { data: profile } = await supabase
         .from('admin_profiles')
-        .select('id, email, role, department')
+        .select('id, email, role, department, is_active')
         .eq('id', session.user.id)
         .maybeSingle();
 
       if (!profile) {
         console.warn('loadProfile: no admin_profiles row found, using defaults. user:', session.user?.email);
+      }
+
+      // Access control: SuperAdmin ne is account ka access temporarily suspend kar diya
+      if (profile && profile.is_active === false) {
+        console.warn('loadProfile: access suspended for user:', profile.email);
+        await supabase.auth.signOut();
+        setIsAuthenticated(false);
+        setUserProfile(null);
+        toast.error(
+          'Admin access suspended',
+          'Your administrator access is currently suspended. Please contact the Super Admin.'
+        );
+        return false;
       }
 
       const userEmail = session.user.email?.toLowerCase() || '';
@@ -186,9 +205,12 @@ export const AdminDashboard: React.FC = () => {
         await loadEvents();
       }
       console.log('loadProfile: data loaded successfully');
+      return true;
     } catch (err: any) {
       console.error('loadProfile ERROR:', err);
       toast.error('Could not load admin profile', err?.message || 'Please try again.');
+      // Original behavior: error par bhi console default profile ke saath khulta hai
+      return true;
     } finally {
       // Always clear loading so the console can render (never leave the UI stuck).
       setLoading(false);
@@ -210,11 +232,10 @@ export const AdminDashboard: React.FC = () => {
         }
 
         console.log('checkExistingSession: session found for user:', session.user.email);
-        await loadProfile(session);
-        
-        // Only set isAuthenticated after successful profile load
-        setIsAuthenticated(true);
+        const profileOk = await loadProfile(session);
         console.log('checkExistingSession: auth complete, dashboard ready');
+        // Only set isAuthenticated after successful profile load
+        setIsAuthenticated(profileOk);
       } catch (err: any) {
         console.error('checkExistingSession ERROR:', err);
         setIsAuthenticated(false);
@@ -260,10 +281,10 @@ export const AdminDashboard: React.FC = () => {
       console.log('handleLoginSuccess: session found, loading profile...');
       
       // Load profile FIRST, then set isAuthenticated
-      await loadProfile(sessionToUse);
+      const profileOk = await loadProfile(sessionToUse);
       
       // Only set isAuthenticated after successful profile load
-      setIsAuthenticated(true);
+      setIsAuthenticated(profileOk);
       console.log('handleLoginSuccess: auth complete, dashboard ready for user:', sessionToUse.user?.email);
     } catch (err: any) {
       setLoading(false);
@@ -322,6 +343,13 @@ export const AdminDashboard: React.FC = () => {
   }
 
   // Authenticated + profile loaded -> render dashboard
+
+  // Agar DB fix (supabase/fix_admin_access.sql) pending hai to error me seedha hint
+  const sqlFixHint = (msg: string) =>
+    /does not exist|gen_salt/i.test(msg)
+      ? `${msg} — Database fix pending: Supabase SQL Editor me supabase/fix_admin_access.sql chalayein.`
+      : msg;
+
   const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreatingAdmin(true);
@@ -341,10 +369,76 @@ export const AdminDashboard: React.FC = () => {
       setNewAdminDept('');
       await loadAdminDirectory();
     } catch (err: any) {
-      toast.error('Could not create department admin', err.message || 'Please check the details and try again.');
+      toast.error(
+        'Could not create department admin',
+        sqlFixHint(err.message || 'Please check the details and try again.')
+      );
     } finally {
       setCreatingAdmin(false);
     }
+  };
+
+  // SuperAdmin: department admin ka access suspend (temporary) ya restore karo
+  const handleToggleAdminAccess = async (adm: AdminProfile) => {
+    if (!adm.id) return;
+    const nextActive = adm.is_active === false;
+    const ok = await confirm({
+      title: nextActive ? 'Restore admin access?' : 'Suspend admin access?',
+      message: nextActive
+        ? `${adm.email} will be able to sign in to the admin console again.`
+        : `${adm.email} will be blocked from signing in until you restore access. Active sessions will be revoked.`,
+      confirmText: nextActive ? 'Restore access' : 'Suspend access',
+      danger: !nextActive,
+    });
+    if (!ok) return;
+
+    setAdminActionId(adm.id);
+    const { error } = await supabase.rpc('set_admin_access', {
+      p_admin_id: adm.id,
+      p_active: nextActive,
+    });
+    setAdminActionId(null);
+
+    if (error) {
+      toast.error(
+        nextActive ? 'Could not restore access' : 'Could not suspend access',
+        sqlFixHint(error.message || 'Please try again.')
+      );
+      return;
+    }
+    toast.success(
+      nextActive ? 'Access restored' : 'Access suspended',
+      nextActive
+        ? `${adm.email} can sign in to the admin console again.`
+        : `${adm.email} can no longer sign in.`
+    );
+    await loadAdminDirectory();
+  };
+
+  // SuperAdmin: department admin ko permanently hatao (login + admin record delete)
+  const handleRemoveAdmin = async (adm: AdminProfile) => {
+    if (!adm.id) return;
+    const ok = await confirm({
+      title: 'Remove department admin?',
+      message: `${adm.email} will lose admin access permanently — their login account and admin record are deleted. Events and certificates they created stay safe.`,
+      confirmText: 'Remove admin',
+      danger: true,
+    });
+    if (!ok) return;
+
+    setAdminActionId(adm.id);
+    const { error } = await supabase.rpc('remove_department_admin', { p_admin_id: adm.id });
+    setAdminActionId(null);
+
+    if (error) {
+      toast.error('Could not remove admin', sqlFixHint(error.message || 'Please try again.'));
+      return;
+    }
+    toast.success(
+      'Department admin removed',
+      `${adm.email} has been removed from the admin directory.`
+    );
+    await loadAdminDirectory();
   };
 
     const handleCreateEvent = async () => {
@@ -981,7 +1075,7 @@ export const AdminDashboard: React.FC = () => {
                     <h2 className="text-sm font-bold text-gray-900">Registered Department Administrators</h2>
                   </div>
                   <span className="text-xs bg-slate-100 px-3 py-1 rounded-full font-bold text-slate-700 border">
-                    {adminList.length} Active Accounts
+                    {adminList.filter((a) => a.is_active !== false).length} Active · {adminList.length} Total
                   </span>
                 </div>
 
@@ -999,7 +1093,8 @@ export const AdminDashboard: React.FC = () => {
                           <th className="py-2.5 px-3 rounded-l-lg">Admin Official Email</th>
                           <th className="py-2.5 px-3">Assigned Department</th>
                           <th className="py-2.5 px-3">Role Privilege</th>
-                          <th className="py-2.5 px-3 rounded-r-lg">Status</th>
+                          <th className="py-2.5 px-3">Status</th>
+                          <th className="py-2.5 px-3 rounded-r-lg">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -1015,9 +1110,49 @@ export const AdminDashboard: React.FC = () => {
                               </span>
                             </td>
                             <td className="py-3 px-3">
-                              <span className="text-[11px] text-emerald-700 font-bold flex items-center gap-1">
-                                <Check size={13} /> Active
-                              </span>
+                              {adm.is_active === false ? (
+                                <span className="text-[11px] text-rose-700 font-bold flex items-center gap-1">
+                                  <Ban size={13} /> Suspended
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-emerald-700 font-bold flex items-center gap-1">
+                                  <Check size={13} /> Active
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3">
+                              {adm.role === 'admin' ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => handleToggleAdminAccess(adm)}
+                                    disabled={adminActionId === adm.id}
+                                    title={adm.is_active === false ? 'Restore admin access' : 'Suspend admin access (temporary)'}
+                                    className={`p-1.5 rounded-lg transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                                      adm.is_active === false
+                                        ? 'text-emerald-700 hover:bg-emerald-50'
+                                        : 'text-amber-700 hover:bg-amber-50'
+                                    }`}
+                                  >
+                                    {adminActionId === adm.id ? (
+                                      <Loader2 size={14} className="animate-spin" />
+                                    ) : adm.is_active === false ? (
+                                      <RotateCcw size={14} />
+                                    ) : (
+                                      <Ban size={14} />
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={() => handleRemoveAdmin(adm)}
+                                    disabled={adminActionId === adm.id}
+                                    title="Remove admin permanently"
+                                    className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-slate-400" title="Super Admin accounts cannot be managed from here">—</span>
+                              )}
                             </td>
                           </tr>
                         ))}

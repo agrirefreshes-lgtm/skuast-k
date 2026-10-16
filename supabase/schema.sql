@@ -19,6 +19,7 @@ create table if not exists public.admin_profiles (
   role text not null default 'admin'
     check (role in ('super_admin', 'admin')),
   department text not null default '',
+  is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
 
@@ -157,7 +158,7 @@ create or replace function public.create_department_admin(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions  -- pgcrypto (gen_salt/crypt) aksar extensions schema me hota hai
 as $$
 declare
   v_uid uuid;
@@ -193,6 +194,111 @@ begin
         department = excluded.department;
 
   return jsonb_build_object('id', v_uid, 'email', lower(btrim(p_email)));
+end;
+$$;
+
+-- 6b. RPC: SuperAdmin → suspend / restore department admin
+-- is_active = false → admin ka access temporary stop (sign-in block).
+-- Existing DB par ye block alag se bhi chala sakte hain:
+--   supabase/fix_admin_access.sql (gen_salt fix ke saath)
+create or replace function public.set_admin_access(
+  p_admin_id uuid,
+  p_active boolean
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_caller uuid := auth.uid();
+  v_is_super boolean;
+begin
+  -- Server-side guard: sirf super_admin (ya superadmin-pattern email) chala sake
+  v_is_super := coalesce(
+    (select role = 'super_admin' from public.admin_profiles where id = v_caller),
+    false
+  ) or coalesce(auth.jwt() ->> 'email', '') ilike '%superadmin%';
+
+  if not v_is_super then
+    raise exception 'Only the Super Admin can change admin access';
+  end if;
+
+  if p_admin_id = v_caller then
+    raise exception 'You cannot suspend your own account';
+  end if;
+
+  update public.admin_profiles
+    set is_active = p_active
+  where id = p_admin_id and role = 'admin';
+
+  if not found then
+    raise exception 'Department admin not found';
+  end if;
+
+  -- Best-effort: active sessions turant revoke (fail-soft)
+  begin
+    delete from auth.refresh_tokens where user_id = p_admin_id;
+  exception when others then null;
+  end;
+  begin
+    delete from auth.sessions where user_id = p_admin_id;
+  exception when others then null;
+  end;
+
+  return jsonb_build_object('id', p_admin_id, 'is_active', p_active);
+end;
+$$;
+
+-- 6c. RPC: SuperAdmin → permanently remove department admin
+-- auth.users delete → admin_profiles ON DELETE CASCADE; events safe (created_by → NULL)
+create or replace function public.remove_department_admin(
+  p_admin_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_caller uuid := auth.uid();
+  v_is_super boolean;
+  v_email text;
+begin
+  v_is_super := coalesce(
+    (select role = 'super_admin' from public.admin_profiles where id = v_caller),
+    false
+  ) or coalesce(auth.jwt() ->> 'email', '') ilike '%superadmin%';
+
+  if not v_is_super then
+    raise exception 'Only the Super Admin can remove admin accounts';
+  end if;
+
+  if p_admin_id = v_caller then
+    raise exception 'You cannot remove your own account';
+  end if;
+
+  select email into v_email
+    from public.admin_profiles
+   where id = p_admin_id and role = 'admin';
+
+  if v_email is null then
+    raise exception 'Department admin not found';
+  end if;
+
+  -- Sessions/refresh tokens bhi saaf (fail-soft)
+  begin
+    delete from auth.refresh_tokens where user_id = p_admin_id;
+  exception when others then null;
+  end;
+  begin
+    delete from auth.sessions where user_id = p_admin_id;
+  exception when others then null;
+  end;
+
+  delete from auth.users where id = p_admin_id;
+
+  return jsonb_build_object('id', p_admin_id, 'email', v_email, 'removed', true);
 end;
 $$;
 
