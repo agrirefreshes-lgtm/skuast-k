@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { verifyPublicCertificate } from '../lib/certificateVerification';
 import { CertificateCanvas } from '../components/CertificateCanvas';
 import type { EventItem, IssuedCertificate } from '../types/certificate';
-import { getFieldDisplayLabel, getFieldReference, resolveFieldReferenceValue } from '../lib/certificateFields';
+import { getFieldDisplayLabel, getFieldReference } from '../lib/certificateFields';
 
 import { 
   ShieldCheck, 
@@ -163,52 +164,16 @@ export const UserPortal: React.FC = () => {
         throw new Error('Certificates download for this event is temporarily paused by department administrator.');
       }
 
-      // 2. Fetch all certificates for this event from Supabase safely
-      const { data: certsData, error: certsErr } = await supabase
-        .from('certificates')
-        .select('*')
-        .eq('event_id', currentEvent.id)
-        .eq('status', 'verified');
-
-      if (certsErr) throw certsErr;
-      if (!certsData || certsData.length === 0) {
-        throw new Error('No certificates have been published for this event yet. Please check back later or contact the event coordinator.');
-      }
-
       if (!currentEvent.fields || currentEvent.fields.length === 0) {
         throw new Error('This event is not fully set up yet — the coordinator has not linked the verification columns. Please try again later.');
       }
 
-      // 3. Robust Excel Data Key-Insensitive Matching
-      const matchedRow = certsData.find((c: any) => {
-        const recordData = c.data || {};
-        
-        // Normalize keys and user inputs (strip spaces, lowercase)
-        const normalize = (str: any) => String(str || '').trim().toLowerCase().replace(/\s+/g, ' ');
-        
-        const cleanUserPrimary = normalize(primaryInput);
-        const cleanUserSecurity = normalize(securityInput);
-
-        const pKey = currentEvent.primaryAuthField || getFieldReference(currentEvent.fields[0]);
-        const sKey = currentEvent.securityAuthField || getFieldReference(currentEvent.fields[1]);
-
-        const pVal = resolveFieldReferenceValue(recordData, currentEvent.fields, pKey);
-        const sVal = resolveFieldReferenceValue(recordData, currentEvent.fields, sKey);
-
-        const foundPrimary = normalize(pVal) === cleanUserPrimary || normalize(c.certificate_no) === cleanUserPrimary;
-        const foundSecurity = normalize(sVal) === cleanUserSecurity;
-
-        // If primary and security are the same field or single field check
-        if (pKey === sKey || !cleanUserSecurity) {
-          return foundPrimary;
-        }
-
-        return foundPrimary && foundSecurity;
+      const matchedRow = await verifyPublicCertificate({
+        mode: 'event-download',
+        event: currentEvent.id,
+        primaryInput,
+        securityInput,
       });
-
-      if (!matchedRow) {
-        throw new Error('No certificate matched these details. Please check the spelling and try again, or contact the event coordinator for help.');
-      }
 
       const formattedCert: IssuedCertificate = {
         certificate_no: matchedRow.certificate_no,

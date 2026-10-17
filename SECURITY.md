@@ -74,11 +74,12 @@ Cache-Control headers set: `no-cache, no-store, must-revalidate`
 ---
 
 ### 11. **Department Admin Login & Creation**
-- Dashboard creation uses the Supabase Auth Admin API through `supabase/functions/create-department-admin/index.ts`; the function verifies the caller's JWT and active `super_admin` profile before creating an account.
+- Dashboard creation uses the Supabase Auth Admin API through `supabase/functions/create-department-admin/index.ts`; the function verifies the caller's JWT and active `super_admin` profile before creating an account and active profile.
+- Suspend/restore/remove operations use `supabase/functions/manage-department-admin/index.ts`; removed admins' event and certificate ownership is transferred to the Super Admin before account deletion.
+- Public QR and event-download certificate lookups use `supabase/functions/verify-certificate/index.ts`. Anonymous clients have no direct certificate-table access; QR responses exclude configured private-field markers, and downloads require the event's two identity values.
 - The service-role key is read only from the Edge Function runtime environment and is never included in the browser bundle.
-- Deploy the Edge Function before the frontend version that invokes it. Keep JWT verification enabled.
-- On an existing project, run `supabase/upgrade_existing.sql` in the Supabase SQL Editor to apply secure policies, remove the legacy direct-auth-creation RPC, and add the required certificate column.
-- The upgrade script repairs missing email identity rows for existing department admins but does not reset passwords or repair malformed Auth records. Remove a broken department-admin account and recreate it through the deployed Auth Admin function.
+- On an existing project, back up the project and run `supabase/upgrade_existing.sql` before deploying the frontend. The upgrade removes legacy direct-auth RPCs, revokes anonymous certificate access, and applies event-ownership policies.
+- Deploy all three Edge Functions before publishing the frontend version that invokes them. Keep JWT verification enabled for both admin functions; certificate verification applies its own public-access rules.
 - Admin login uses Supabase Auth email/password and only opens the console when the user has an active `admin` or `super_admin` profile.
 
 ---
@@ -86,9 +87,5 @@ Cache-Control headers set: `no-cache, no-store, must-revalidate`
 ## Security Tests Summary
 
 ```
-✅ 46/46 tests passing
-
-Security (16 tests): SEC-001 to SEC-061
-Performance (10 tests): PERF-001 to PERF-051
-Certificate Fields (12 tests)
+✅ 47/47 tests passing with `npm test`
 ```

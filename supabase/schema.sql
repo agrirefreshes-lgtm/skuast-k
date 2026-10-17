@@ -3,7 +3,7 @@
 -- =====================================================================
 -- Creates: admin_profiles, events, certificates, storage bucket
 --          templates/, RLS policies (anon-key app compatible),
---          RPCs for suspending/removing department admins
+--          role-aware row-level security and template storage policies
 -- Browser uses the public anon key; RLS policies restrict public access.
 -- Never put a service-role key in the frontend.
 -- =====================================================================
@@ -64,34 +64,100 @@ create index if not exists idx_certs_event
 create index if not exists idx_certs_batch on public.certificates (batch_id);
 create index if not exists idx_certs_uploaded
   on public.certificates (uploaded_certificate_no);
--- 4. Row Level Security ON + anon-key compatible policies
--- (Public certificate/event reads are available through the anon key.
--- Admin profile writes are never granted to browser roles.)
+-- 4. Role-aware access control
 alter table public.admin_profiles enable row level security;
 alter table public.events enable row level security;
 alter table public.certificates enable row level security;
 
--- 4a. TABLE GRANTS (RLS policies ke SAATH ye bhi chahiye — warna 42501
--- "permission denied for table" aata hai; events par tha isliye wahi chal raha tha)
+create or replace function public.is_active_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select exists (
+    select 1 from public.admin_profiles ap
+    where ap.id = auth.uid() and ap.is_active = true
+      and ap.role in ('admin', 'super_admin')
+  );
+$$;
+
+create or replace function public.is_active_super_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select exists (
+    select 1 from public.admin_profiles ap
+    where ap.id = auth.uid() and ap.is_active = true
+      and ap.role = 'super_admin'
+  );
+$$;
+
+create or replace function public.can_manage_event(p_event_id text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select public.is_active_admin() and exists (
+    select 1 from public.events e
+    where e.id = p_event_id
+      and (e.created_by = auth.uid() or public.is_active_super_admin())
+  );
+$$;
+
+create or replace function public.can_manage_template_object(p_name text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select public.is_active_admin() and exists (
+    select 1 from public.events e
+    where (
+      position('/templates/' || p_name in e.template_url) > 0
+      or left(p_name, length(e.id) + 1) = e.id || '-'
+      or left(p_name, length(e.id) + 1) = e.id || '/'
+    )
+      and (e.created_by = auth.uid() or public.is_active_super_admin())
+  );
+$$;
+
+revoke all on function public.is_active_admin() from public, anon;
+revoke all on function public.is_active_super_admin() from public, anon;
+revoke all on function public.can_manage_event(text) from public, anon;
+revoke all on function public.can_manage_template_object(text) from public, anon;
+grant execute on function public.is_active_admin() to authenticated;
+grant execute on function public.is_active_super_admin() to authenticated;
+grant execute on function public.can_manage_event(text) to authenticated;
+grant execute on function public.can_manage_template_object(text) to authenticated;
+
 revoke all on public.admin_profiles from public, anon;
 grant select on public.admin_profiles to authenticated;
 revoke insert, update, delete on public.admin_profiles from authenticated;
-grant select on public.events to anon;
-grant all on public.events to authenticated;
-grant select on public.certificates to anon;
-grant all on public.certificates to authenticated;
-grant select, insert, update, delete on storage.objects to authenticated;
-revoke insert, update, delete on public.events from public, anon;
-revoke insert, update, delete on public.certificates from public, anon;
+revoke all on public.events from public, anon, authenticated;
+grant select on public.events to anon, authenticated;
+grant insert, update, delete on public.events to authenticated;
+revoke all on public.certificates from public, anon, authenticated;
+grant select, insert, update, delete on public.certificates to authenticated;
+grant select on storage.objects to anon, authenticated;
+grant insert, update, delete on storage.objects to authenticated;
 
 drop policy if exists "public read admin_profiles" on public.admin_profiles;
 drop policy if exists "open insert admin_profiles" on public.admin_profiles;
 drop policy if exists "open update admin_profiles" on public.admin_profiles;
+drop policy if exists "self update admin_profiles" on public.admin_profiles;
 drop policy if exists "authenticated read admin_profiles" on public.admin_profiles;
 create policy "authenticated read admin_profiles"
   on public.admin_profiles for select
   to authenticated
-  using (true);
+  using (id = auth.uid() or public.is_active_super_admin());
 
 drop policy if exists "public read events" on public.events;
 drop policy if exists "authenticated read events" on public.events;
@@ -102,30 +168,56 @@ create policy "public read events"
 create policy "authenticated read events"
   on public.events for select
   to authenticated
-  using (true);
+  using (public.is_active_admin() and (created_by = auth.uid() or public.is_active_super_admin()));
 drop policy if exists "open write events" on public.events;
 drop policy if exists "authenticated write events" on public.events;
-create policy "authenticated write events"
-  on public.events for all
+drop policy if exists "active admins insert owned events" on public.events;
+drop policy if exists "active admins update owned events" on public.events;
+drop policy if exists "active admins delete owned events" on public.events;
+create policy "active admins insert owned events"
+  on public.events for insert
   to authenticated
-  using (true) with check (true);
+  with check (public.is_active_admin() and created_by = auth.uid());
+create policy "active admins update owned events"
+  on public.events for update
+  to authenticated
+  using (public.can_manage_event(id))
+  with check (
+    public.is_active_admin() and
+    (created_by = auth.uid() or public.is_active_super_admin())
+  );
+create policy "active admins delete owned events"
+  on public.events for delete
+  to authenticated
+  using (public.can_manage_event(id));
 
 drop policy if exists "public read certificates" on public.certificates;
 drop policy if exists "authenticated read certificates" on public.certificates;
-create policy "public read certificates"
-  on public.certificates for select
-  to anon
-  using (true);
 create policy "authenticated read certificates"
   on public.certificates for select
   to authenticated
-  using (true);
+  using (public.can_manage_event(event_id));
 drop policy if exists "open write certificates" on public.certificates;
 drop policy if exists "authenticated write certificates" on public.certificates;
-create policy "authenticated write certificates"
-  on public.certificates for all
+drop policy if exists "active admins insert owned certificates" on public.certificates;
+drop policy if exists "active admins update owned certificates" on public.certificates;
+drop policy if exists "active admins delete owned certificates" on public.certificates;
+create policy "active admins insert owned certificates"
+  on public.certificates for insert
   to authenticated
-  using (true) with check (true);
+  with check (public.can_manage_event(event_id) and created_by = auth.uid());
+create policy "active admins update owned certificates"
+  on public.certificates for update
+  to authenticated
+  using (public.can_manage_event(event_id))
+  with check (
+    public.can_manage_event(event_id) and
+    (created_by = auth.uid() or public.is_active_super_admin())
+  );
+create policy "active admins delete owned certificates"
+  on public.certificates for delete
+  to authenticated
+  using (public.can_manage_event(event_id));
 
 -- 5. Storage bucket templates/ (certificate blank formats)
 insert into storage.buckets (id, name, public)
@@ -144,127 +236,20 @@ drop policy if exists "open upload templates" on storage.objects;
 create policy "authenticated upload templates"
   on storage.objects for insert
   to authenticated
-  with check (bucket_id = 'templates');
+  with check (bucket_id = 'templates' and public.can_manage_template_object(name));
 
 drop policy if exists "open update templates" on storage.objects;
 create policy "authenticated update templates"
   on storage.objects for update
   to authenticated
-  using (bucket_id = 'templates') with check (bucket_id = 'templates');
+  using (bucket_id = 'templates' and public.can_manage_template_object(name))
+  with check (bucket_id = 'templates' and public.can_manage_template_object(name));
 
 drop policy if exists "open delete templates" on storage.objects;
 create policy "authenticated delete templates"
   on storage.objects for delete
   to authenticated
-  using (bucket_id = 'templates');
-
--- 6. RPC: SuperAdmin → suspend / restore department admin
--- is_active = false → admin ka access temporary stop (sign-in block).
-create or replace function public.set_admin_access(
-  p_admin_id uuid,
-  p_active boolean
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = pg_catalog, public, extensions
-as $$
-declare
-  v_caller uuid := auth.uid();
-  v_is_super boolean;
-begin
-  v_is_super := v_caller is not null and exists (
-    select 1 from public.admin_profiles
-    where id = v_caller and role = 'super_admin' and is_active = true
-  );
-
-  if not v_is_super then
-    raise exception 'Only the Super Admin can change admin access';
-  end if;
-
-  if p_admin_id = v_caller then
-    raise exception 'You cannot suspend your own account';
-  end if;
-
-  update public.admin_profiles
-    set is_active = p_active
-  where id = p_admin_id and role = 'admin';
-
-  if not found then
-    raise exception 'Department admin not found';
-  end if;
-
-  -- Best-effort: active sessions turant revoke (fail-soft)
-  begin
-    delete from auth.refresh_tokens where user_id = p_admin_id;
-  exception when others then null;
-  end;
-  begin
-    delete from auth.sessions where user_id = p_admin_id;
-  exception when others then null;
-  end;
-
-  return jsonb_build_object('id', p_admin_id, 'is_active', p_active);
-end;
-$$;
-
--- 6b. RPC: SuperAdmin → permanently remove department admin
--- auth.users delete → admin_profiles ON DELETE CASCADE; events safe (created_by → NULL)
-create or replace function public.remove_department_admin(
-  p_admin_id uuid
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = pg_catalog, public, extensions
-as $$
-declare
-  v_caller uuid := auth.uid();
-  v_is_super boolean;
-  v_email text;
-begin
-  v_is_super := v_caller is not null and exists (
-    select 1 from public.admin_profiles
-    where id = v_caller and role = 'super_admin' and is_active = true
-  );
-
-  if not v_is_super then
-    raise exception 'Only the Super Admin can remove admin accounts';
-  end if;
-
-  if p_admin_id = v_caller then
-    raise exception 'You cannot remove your own account';
-  end if;
-
-  select email into v_email
-    from public.admin_profiles
-   where id = p_admin_id and role = 'admin';
-
-  if v_email is null then
-    raise exception 'Department admin not found';
-  end if;
-
-  -- Sessions/refresh tokens bhi saaf (fail-soft)
-  begin
-    delete from auth.refresh_tokens where user_id = p_admin_id;
-  exception when others then null;
-  end;
-  begin
-    delete from auth.sessions where user_id = p_admin_id;
-  exception when others then null;
-  end;
-
-  delete from auth.users where id = p_admin_id;
-
-  return jsonb_build_object('id', p_admin_id, 'email', v_email, 'removed', true);
-end;
-$$;
-
--- SECURITY DEFINER admin RPCs must not be executable by anon or PUBLIC.
-revoke all on function public.set_admin_access(uuid, boolean) from public, anon, authenticated;
-revoke all on function public.remove_department_admin(uuid) from public, anon, authenticated;
-grant execute on function public.set_admin_access(uuid, boolean) to authenticated;
-grant execute on function public.remove_department_admin(uuid) to authenticated;
+  using (bucket_id = 'templates' and public.can_manage_template_object(name));
 
 -- 7. Pehla SuperAdmin kaise banayein (MANUAL, SQL me ek baar):
 -- Step A: App me nahi — Supabase Dashboard → Authentication → Users

@@ -344,12 +344,6 @@ export const AdminDashboard: React.FC = () => {
 
   // Authenticated + profile loaded -> render dashboard
 
-  // Agar DB upgrade pending hai to error me seedha hint
-  const sqlFixHint = (msg: string) =>
-    /does not exist|gen_salt/i.test(msg)
-      ? `${msg} — Database upgrade pending: Supabase SQL Editor me supabase/upgrade_existing.sql chalayein.`
-      : msg;
-
   const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreatingAdmin(true);
@@ -396,39 +390,41 @@ export const AdminDashboard: React.FC = () => {
         data && typeof data === 'object' && !Array.isArray(data)
           ? data as Record<string, unknown>
           : null;
-      const nestedUser =
-        response?.user && typeof response.user === 'object' && !Array.isArray(response.user)
-          ? response.user as Record<string, unknown>
+      const nestedAdmin =
+        response?.admin && typeof response.admin === 'object' && !Array.isArray(response.admin)
+          ? response.admin as Record<string, unknown>
           : null;
-      const returnedId =
-        typeof response?.id === 'string'
-          ? response.id
-          : typeof nestedUser?.id === 'string'
-            ? nestedUser.id
-            : null;
+      if (
+        response?.ok !== true ||
+        typeof nestedAdmin?.id !== 'string' ||
+        nestedAdmin.role !== 'admin' ||
+        nestedAdmin.is_active !== true ||
+        nestedAdmin.email !== newAdminEmail.trim().toLowerCase()
+      ) {
+        const serviceMessage =
+          typeof response?.error === 'string'
+            ? response.error
+            : typeof response?.message === 'string'
+              ? response.message
+              : 'The service did not confirm an active department-admin account.';
+        throw new Error(`${serviceMessage} Confirm the exact create-department-admin Edge Function is deployed.`);
+      }
 
-      if (!returnedId) {
-        const { data: createdProfile, error: verificationError } = await supabase
-          .from('admin_profiles')
-          .select('id, role, is_active')
-          .eq('email', newAdminEmail.trim().toLowerCase())
-          .maybeSingle();
-
-        if (verificationError) {
-          throw new Error(
-            `The creation service returned success, but the new admin could not be verified: ${verificationError.message}`
-          );
-        }
-        if (
-          !createdProfile ||
-          createdProfile.role !== 'admin' ||
-          createdProfile.is_active === false
-        ) {
-          const fields = response ? Object.keys(response).join(', ') || 'none' : 'none';
-          throw new Error(
-            `The creation service returned success without confirming an active admin account (response fields: ${fields}). Check the Edge Function deployment and logs before retrying.`
-          );
-        }
+      const { data: createdProfile, error: verificationError } = await supabase
+        .from('admin_profiles')
+        .select('id, email, role, is_active')
+        .eq('id', nestedAdmin.id)
+        .maybeSingle();
+      if (verificationError) {
+        throw new Error(`The new admin profile could not be verified: ${verificationError.message}`);
+      }
+      if (
+        !createdProfile ||
+        createdProfile.email !== nestedAdmin.email ||
+        createdProfile.role !== 'admin' ||
+        createdProfile.is_active !== true
+      ) {
+        throw new Error('The service did not create an active department-admin profile. Do not retry until the function logs are checked.');
       }
 
       toast.success('Department admin created', `Access granted to ${newAdminEmail}. They can now sign in from the Admin tab.`);
@@ -443,6 +439,44 @@ export const AdminDashboard: React.FC = () => {
       );
     } finally {
       setCreatingAdmin(false);
+    }
+  };
+
+  const manageAdminAccess = async (
+    action: 'suspend' | 'restore' | 'remove',
+    adminId: string,
+  ): Promise<void> => {
+    const { data, error } = await supabase.functions.invoke<unknown>(
+      'manage-department-admin',
+      { body: { action, adminId } },
+    );
+    if (error) {
+      if (error instanceof FunctionsHttpError && error.context instanceof Response) {
+        const text = await error.context.clone().text();
+        if (text) {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            throw new Error(text);
+          }
+          if (payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string') {
+            throw new Error(payload.error);
+          }
+          if (payload && typeof payload === 'object' && 'message' in payload && typeof payload.message === 'string') {
+            throw new Error(payload.message);
+          }
+          throw new Error(text);
+        }
+      }
+      throw new Error(error.message);
+    }
+    if (!data || typeof data !== 'object' || !('ok' in data) || data.ok !== true) {
+      const message =
+        data && typeof data === 'object' && 'message' in data && typeof data.message === 'string'
+          ? data.message
+          : 'The admin management service did not confirm the requested action.';
+      throw new Error(message);
     }
   };
 
@@ -461,19 +495,17 @@ export const AdminDashboard: React.FC = () => {
     if (!ok) return;
 
     setAdminActionId(adm.id);
-    const { error } = await supabase.rpc('set_admin_access', {
-      p_admin_id: adm.id,
-      p_active: nextActive,
-    });
-    setAdminActionId(null);
-
-    if (error) {
+    try {
+      await manageAdminAccess(nextActive ? 'restore' : 'suspend', adm.id);
+    } catch (err: unknown) {
       toast.error(
         nextActive ? 'Could not restore access' : 'Could not suspend access',
-        sqlFixHint(error.message || 'Please try again.')
+        err instanceof Error ? err.message : 'Please try again.'
       );
+      setAdminActionId(null);
       return;
     }
+    setAdminActionId(null);
     toast.success(
       nextActive ? 'Access restored' : 'Access suspended',
       nextActive
@@ -495,13 +527,17 @@ export const AdminDashboard: React.FC = () => {
     if (!ok) return;
 
     setAdminActionId(adm.id);
-    const { error } = await supabase.rpc('remove_department_admin', { p_admin_id: adm.id });
-    setAdminActionId(null);
-
-    if (error) {
-      toast.error('Could not remove admin', sqlFixHint(error.message || 'Please try again.'));
+    try {
+      await manageAdminAccess('remove', adm.id);
+    } catch (err: unknown) {
+      toast.error(
+        'Could not remove admin',
+        err instanceof Error ? err.message : 'Please try again.'
+      );
+      setAdminActionId(null);
       return;
     }
+    setAdminActionId(null);
     toast.success(
       'Department admin removed',
       `${adm.email} has been removed from the admin directory.`

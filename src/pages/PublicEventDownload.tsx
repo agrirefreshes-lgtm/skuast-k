@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import type { EventItem, IssuedCertificate } from '../types/certificate';
 import { CertificateCanvas } from '../components/CertificateCanvas';
-import { getFieldDisplayLabel, getFieldReference, resolveFieldReferenceValue } from '../lib/certificateFields';
+import { getFieldDisplayLabel, getFieldReference } from '../lib/certificateFields';
 
 import { supabase } from '../lib/supabaseClient';
+import { verifyPublicCertificate } from '../lib/certificateVerification';
 import { ShieldAlert, Download, Building2, CheckCircle2, Lock, Loader2 } from 'lucide-react';
 
 export const PublicEventDownload: React.FC = () => {
@@ -16,6 +17,7 @@ export const PublicEventDownload: React.FC = () => {
   const [matchedCert, setMatchedCert] = useState<IssuedCertificate | null>(null);
   const [loadingEvent, setLoadingEvent] = useState(true);
   const [searching, setSearching] = useState(false);
+  const [verificationError, setVerificationError] = useState('');
 
   useEffect(() => {
     const fetchEvent = async () => {
@@ -60,49 +62,35 @@ export const PublicEventDownload: React.FC = () => {
       setSearching(false);
       setSearched(true);
       setMatchedCert(null);
+      setVerificationError('Certificate downloads for this event are currently unavailable.');
       return;
     }
 
     setSearching(true);
     setSearched(true);
-
-    const norm = (str: string) => (str || '').trim().toLowerCase().replace(/\s+/g, ' ');
-
-    const { data: certsList, error } = await supabase
-      .from('certificates')
-      .select('*')
-      .eq('event_id', event.id)
-      .eq('status', 'verified');
-
-    if (!error && certsList) {
-      const pKey = event.primaryAuthField || getFieldReference(event.fields[0]);
-      const sKey = event.securityAuthField || getFieldReference(event.fields[1]);
-
-      const found = certsList.find((c: any) => {
-        const pVal = resolveFieldReferenceValue(c.data || {}, event.fields, pKey);
-        const sVal = resolveFieldReferenceValue(c.data || {}, event.fields, sKey);
-        const match1 = norm(pVal) === norm(primaryInput) || norm(c.certificate_no) === norm(primaryInput);
-        const match2 = norm(sVal) === norm(securityInput);
-        return match1 && match2;
+    setVerificationError('');
+    try {
+      const found = await verifyPublicCertificate({
+        mode: 'event-download',
+        event: event.id,
+        primaryInput,
+        securityInput,
       });
-
-      if (found) {
-        setMatchedCert({
-          certificate_no: found.certificate_no,
-          event_id: found.event_id,
-          event_name: found.event_name,
-          batchId: found.batch_id,
-          issue_date: found.issue_date,
-          status: found.status,
-          data: found.data,
-        });
-      } else {
-        setMatchedCert(null);
-      }
-    } else {
+      setMatchedCert({
+        certificate_no: found.certificate_no,
+        event_id: found.event_id,
+        event_name: found.event_name,
+        batchId: found.batch_id,
+        issue_date: found.issue_date,
+        status: found.status,
+        data: found.data,
+      });
+    } catch (error: unknown) {
       setMatchedCert(null);
+      setVerificationError(error instanceof Error ? error.message : 'Certificate verification failed.');
+    } finally {
+      setSearching(false);
     }
-    setSearching(false);
   };
 
   if (loadingEvent) {
@@ -227,7 +215,7 @@ export const PublicEventDownload: React.FC = () => {
                   <ShieldAlert className="text-rose-500 mx-auto" size={36} />
                   <h4 className="text-sm font-bold text-rose-800">Certificate Not Found</h4>
                   <p className="text-xs text-rose-600 max-w-sm mx-auto leading-relaxed">
-                    No certificate matched these details. Please check the spelling and try again, or contact the <b>event coordinator</b> for help.
+                    {verificationError || 'No certificate matched these details. Please check the spelling and try again, or contact the event coordinator for help.'}
                   </p>
                 </div>
               )}

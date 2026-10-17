@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import { verifyPublicCertificate } from '../lib/certificateVerification';
 import type { IssuedCertificate } from '../types/certificate';
 import type { IScannerControls } from '@zxing/browser';
 import { 
@@ -85,64 +85,24 @@ export const PublicVerification: React.FC = () => {
     setCert(null);
     setErrorMsg('');
 
-    // 1) Exact match (PK column) — limit(2): maybeSingle nahi, taaki
-    //    duplicate-row par PGRST116 crash ki jagah pehli row le lein.
-    // 2) Nahi mila to case-insensitive exact (ilike, wildcard-escaped).
-    // 3) Uske baad row ke data JSONB ke andar 'Certificate No' column fallback
-    //    (naye uploads me cert-no row-data me bhi store hota hai).
-    const escaped = cleanTarget.replace(/[%_\\]/g, (ch) => `\\${ch}`);
-    let certData: any = null;
-    let lastErr: any = null;
-
-    const exactRes = await supabase
-      .from('certificates')
-      .select('*')
-      .eq('certificate_no', cleanTarget)
-      .limit(2);
-    if (!exactRes.error && exactRes.data && exactRes.data.length > 0) {
-      certData = exactRes.data[0];
-    } else {
-      if (exactRes.error) lastErr = exactRes.error;
-      const ciRes = await supabase
-        .from('certificates')
-        .select('*')
-        .ilike('certificate_no', escaped)
-        .limit(2);
-      if (!ciRes.error && ciRes.data && ciRes.data.length > 0) {
-        certData = ciRes.data[0];
-      } else {
-        if (ciRes.error) lastErr = ciRes.error;
-        // JSONB fallback: data ke andar 'Certificate No' exact
-        // (PostgREST filter syntax: data->>Certificate No)
-        const jsonRes = await supabase
-          .from('certificates')
-          .select('*')
-          .filter('data->>Certificate No', 'eq', cleanTarget)
-          .limit(2);
-        if (!jsonRes.error && jsonRes.data && jsonRes.data.length > 0) {
-          certData = jsonRes.data[0];
-        } else if (jsonRes.error) {
-          lastErr = jsonRes.error;
-        }
-      }
-    }
-
-    if (!certData && lastErr) {
-      const code = lastErr?.code ? `[${lastErr.code}] ` : '';
-      setErrorMsg(`${code}${lastErr?.message || String(lastErr)}`);
-    }
-
-    if (certData) {
+    try {
+      const certData = await verifyPublicCertificate({
+        mode: 'qr',
+        certificateNo: cleanTarget,
+      });
       setCert({
         certificate_no: certData.certificate_no,
         event_id: certData.event_id,
         event_name: certData.event_name,
         issue_date: certData.issue_date,
         status: certData.status,
-        data: certData.data || {},
+        data: certData.data,
       });
+    } catch (error: unknown) {
+      setErrorMsg(error instanceof Error ? error.message : 'Certificate verification failed.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const executeVerificationRef = useRef(executeVerification);
