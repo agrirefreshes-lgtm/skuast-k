@@ -350,18 +350,91 @@ export const AdminDashboard: React.FC = () => {
       ? `${msg} — Database fix pending: Supabase SQL Editor me supabase/fix_admin_access.sql chalayein.`
       : msg;
 
+  // Edge Function ki error body se server ka message nikalo
+  // (FunctionsHttpError ka `context` ek Response hota hai)
+  const extractFunctionError = async (fnError: unknown): Promise<string | null> => {
+    if (!fnError) return null;
+    const anyErr = fnError as { message?: string; context?: unknown };
+    const ctx = anyErr.context as { status?: number; json?: () => Promise<unknown> } | null;
+    if (ctx && typeof ctx.json === 'function') {
+      try {
+        const payload = (await ctx.json()) as { error?: unknown };
+        if (typeof payload?.error === 'string' && payload.error) {
+          return payload.error;
+        }
+      } catch {
+        /* JSON parse fail → neeche generic message */
+      }
+    }
+    if (typeof anyErr.message === 'string' && anyErr.message) return anyErr.message;
+    return 'Please try again.';
+  };
+
+  // Edge Function deploy nahi hui ho to RPC fallback — sirf is case me fallback
+  const isMissingFunction = (fnError: unknown, msg: string | null): boolean => {
+    const status = (fnError as { context?: { status?: number } } | null)?.context?.status;
+    if (status === 404) return true;
+    return !!msg && /not found|Failed to fetch|Failed to send a request/i.test(msg);
+  };
+
   const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreatingAdmin(true);
 
     try {
-      const { error } = await supabase.rpc('create_department_admin', {
-        p_email: newAdminEmail.trim().toLowerCase(),
-        p_password: newAdminPassword.trim(),
-        p_department: newAdminDept.trim()
-      });
+      // PRIMARY: Edge Function `create-department-admin` — official Auth Admin
+      // API se banana (hashing + identities server-side, login turant ready).
+      // Agar function abhi deploy nahi hui to legacy RPC path use hota hai.
+      let createError: string | null = null;
+      let usedEdge = false;
 
-      if (error) throw error;
+      try {
+        const { data, error: fnError } = await supabase.functions.invoke(
+          'create-department-admin',
+          {
+            body: {
+              email: newAdminEmail.trim().toLowerCase(),
+              password: newAdminPassword.trim(),
+              department: newAdminDept.trim(),
+            },
+          }
+        );
+        if (fnError) {
+          const msg = await extractFunctionError(fnError);
+          if (isMissingFunction(fnError, msg)) {
+            usedEdge = false; // function abhi deploy nahi — neeche RPC fallback
+          } else {
+            createError = msg || 'Please try again.';
+          }
+        } else if (!data || !(data as { id?: string }).id) {
+          createError = 'Could not create the login account. Please try again.';
+          usedEdge = false;
+        } else {
+          usedEdge = true;
+        }
+      } catch (e: any) {
+        const msg = String(e?.message || e || '');
+        if (isMissingFunction(e, msg)) {
+          usedEdge = false; // network/fetch failure — neeche RPC fallback
+        } else {
+          createError = msg || 'Please try again.';
+        }
+      }
+
+      if (!createError && !usedEdge) {
+        // LEGACY fallback: purana RPC path (fix_admin_access.sql apply hona chahiye)
+        const { error } = await supabase.rpc('create_department_admin', {
+          p_email: newAdminEmail.trim().toLowerCase(),
+          p_password: newAdminPassword.trim(),
+          p_department: newAdminDept.trim()
+        });
+
+        if (error) {
+          createError = sqlFixHint(error.message || 'Please check the details and try again.');
+        }
+      }
+
+      if (createError) throw new Error(createError);
 
       toast.success('Department admin created', `Access granted to ${newAdminEmail}. They can now sign in from the Admin tab.`);
       setNewAdminEmail('');
