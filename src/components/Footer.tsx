@@ -115,6 +115,7 @@ export const Footer: React.FC = () => {
           <p className="text-slate-400 flex items-center gap-1">
             Certified Academic Credential Management System
           </p>
+          <p className="text-emerald-400 font-semibold">Powered by Agritors</p>
         </div>
       </div>
     </footer>

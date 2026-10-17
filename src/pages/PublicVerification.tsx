@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import type { IssuedCertificate } from '../types/certificate';
-import { BrowserMultiFormatReader } from '@zxing/browser';
+import type { IScannerControls } from '@zxing/browser';
 import { 
   XCircle, 
   Loader2, 
@@ -75,7 +75,6 @@ export const PublicVerification: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState('');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
 
   const executeVerification = async (targetId: string) => {
     const cleanTarget = extractCertId(targetId);
@@ -172,46 +171,52 @@ export const PublicVerification: React.FC = () => {
     if (scanMode !== 'camera') return;
 
     setCameraError('');
-    const reader = new BrowserMultiFormatReader();
-    codeReaderRef.current = reader;
     let stopped = false;
+    let scannerControls: IScannerControls | null = null;
 
-    reader.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
-      if (stopped) return;
-      if (result) {
-        const scannedId = extractCertId(result.getText());
-        if (scannedId) {
-          stopped = true;
-          setInputCertNo(scannedId);
-          setSearchParams({ id: scannedId });
-          setHashId(scannedId);
-          setScanMode('manual');
-          executeVerificationRef.current(scannedId);
+    const startScanner = async () => {
+      try {
+        const { BrowserMultiFormatReader } = await import('@zxing/browser');
+        if (stopped) return;
+        const reader = new BrowserMultiFormatReader();
+        const controls = await reader.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
+          if (stopped) return;
+          if (result) {
+            const scannedId = extractCertId(result.getText());
+            if (scannedId) {
+              stopped = true;
+              setInputCertNo(scannedId);
+              setSearchParams({ id: scannedId });
+              setHashId(scannedId);
+              setScanMode('manual');
+              executeVerificationRef.current(scannedId);
+            }
+          }
+          if (err && (err as any)?.name !== 'NotFoundException') {
+            console.debug(err);
+          }
+        });
+        if (stopped) {
+          controls.stop();
+        } else {
+          scannerControls = controls;
+        }
+      } catch (e) {
+        if (!stopped) {
+          setCameraError('Camera access denied or unavailable. Please use manual entry.');
+          console.error(e);
         }
       }
-      if (err && (err as any)?.name !== 'NotFoundException') {
-        console.debug(err);
-      }
-    }).catch((e) => {
-      if (!stopped) {
-        setCameraError('Camera access denied or unavailable. Please use manual entry.');
-        console.error(e);
-      }
-    });
+    };
+
+    void startScanner();
 
     return () => {
       stopped = true;
-      try {
-        const anyReader = codeReaderRef.current as any;
-        if (anyReader?.reset) anyReader.reset();
-        if (anyReader?.stopContinuousDecode) anyReader.stopContinuousDecode();
-      } catch {
-        // ignore cleanup errors
-      }
+      scannerControls?.stop();
       const stream = videoRef.current?.srcObject as MediaStream | null | undefined;
       stream?.getTracks().forEach((track) => track.stop());
       if (videoRef.current) videoRef.current.srcObject = null;
-      codeReaderRef.current = null;
     };
   }, [scanMode, setSearchParams]);
 

@@ -1,12 +1,11 @@
--- =====================================================================
 -- SKUAST-K Certificate System — Fresh Supabase Schema (RUN ONCE)
 -- Supabase Dashboard → SQL Editor → New Query → paste FULL file → Run
 -- =====================================================================
 -- Creates: admin_profiles, events, certificates, storage bucket
 --          templates/, RLS policies (anon-key app compatible),
 --          RPC create_department_admin(p_email, p_password, p_department)
--- App uses PUBLIC anon key directly, isliye policies permissive hain.
--- Secrets kabhi git me mat dalo (.env gitignored hai).
+-- Browser uses the public anon key; RLS policies restrict public access.
+-- Never put a service-role key in the frontend.
 -- =====================================================================
 
 -- 0. Extensions
@@ -53,6 +52,7 @@ create table if not exists public.certificates (
   event_name text not null default '',
   batch_id text not null default '',
   issue_date date not null default current_date,
+  uploaded_certificate_no text,
   status text not null default 'verified'
     check (status in ('verified', 'cancelled')),
   data jsonb not null default '{}'::jsonb,
@@ -62,6 +62,8 @@ create table if not exists public.certificates (
 create index if not exists idx_certs_event
   on public.certificates (event_id, created_at);
 create index if not exists idx_certs_batch on public.certificates (batch_id);
+create index if not exists idx_certs_uploaded
+  on public.certificates (uploaded_certificate_no);
 -- 4. Row Level Security ON + anon-key compatible policies
 -- (Public certificate/event reads are available through the anon key.
 -- Admin profile writes are never granted to browser roles.)
@@ -71,13 +73,16 @@ alter table public.certificates enable row level security;
 
 -- 4a. TABLE GRANTS (RLS policies ke SAATH ye bhi chahiye — warna 42501
 -- "permission denied for table" aata hai; events par tha isliye wahi chal raha tha)
-revoke all on public.admin_profiles from anon;
+revoke all on public.admin_profiles from public, anon;
 grant select on public.admin_profiles to authenticated;
 revoke insert, update, delete on public.admin_profiles from authenticated;
 grant select on public.events to anon;
 grant all on public.events to authenticated;
 grant select on public.certificates to anon;
 grant all on public.certificates to authenticated;
+grant select, insert, update, delete on storage.objects to authenticated;
+revoke insert, update, delete on public.events from public, anon;
+revoke insert, update, delete on public.certificates from public, anon;
 
 drop policy if exists "public read admin_profiles" on public.admin_profiles;
 drop policy if exists "open insert admin_profiles" on public.admin_profiles;
@@ -89,20 +94,38 @@ create policy "authenticated read admin_profiles"
   using (true);
 
 drop policy if exists "public read events" on public.events;
+drop policy if exists "authenticated read events" on public.events;
 create policy "public read events"
-  on public.events for select using (true);
-
+  on public.events for select
+  to anon
+  using (is_published = true);
+create policy "authenticated read events"
+  on public.events for select
+  to authenticated
+  using (true);
 drop policy if exists "open write events" on public.events;
-create policy "open write events"
-  on public.events for all using (true) with check (true);
+drop policy if exists "authenticated write events" on public.events;
+create policy "authenticated write events"
+  on public.events for all
+  to authenticated
+  using (true) with check (true);
 
 drop policy if exists "public read certificates" on public.certificates;
+drop policy if exists "authenticated read certificates" on public.certificates;
 create policy "public read certificates"
-  on public.certificates for select using (true);
-
+  on public.certificates for select
+  to anon
+  using (true);
+create policy "authenticated read certificates"
+  on public.certificates for select
+  to authenticated
+  using (true);
 drop policy if exists "open write certificates" on public.certificates;
-create policy "open write certificates"
-  on public.certificates for all using (true) with check (true);
+drop policy if exists "authenticated write certificates" on public.certificates;
+create policy "authenticated write certificates"
+  on public.certificates for all
+  to authenticated
+  using (true) with check (true);
 
 -- 5. Storage bucket templates/ (certificate blank formats)
 insert into storage.buckets (id, name, public)
@@ -110,42 +133,30 @@ values ('templates', 'templates', true)
 on conflict (id) do update set public = true;
 
 drop policy if exists "public read templates" on storage.objects;
+drop policy if exists "authenticated upload templates" on storage.objects;
+drop policy if exists "authenticated update templates" on storage.objects;
+drop policy if exists "authenticated delete templates" on storage.objects;
 create policy "public read templates"
   on storage.objects for select
   using (bucket_id = 'templates');
 
 drop policy if exists "open upload templates" on storage.objects;
-create policy "open upload templates"
+create policy "authenticated upload templates"
   on storage.objects for insert
+  to authenticated
   with check (bucket_id = 'templates');
 
 drop policy if exists "open update templates" on storage.objects;
-create policy "open update templates"
+create policy "authenticated update templates"
   on storage.objects for update
+  to authenticated
   using (bucket_id = 'templates') with check (bucket_id = 'templates');
 
 drop policy if exists "open delete templates" on storage.objects;
-create policy "open delete templates"
+create policy "authenticated delete templates"
   on storage.objects for delete
+  to authenticated
   using (bucket_id = 'templates');
-
--- =====================================================================
--- FIX-42501 (sirf ye block chalao — poori schema dobara chalane ki zaroorat nahi)
--- Supabase Dashboard → SQL Editor → New Query → ye block paste → Run
--- Wajah: certificates table par anon role ko GRANT SELECT nahi tha,
--- isliye RLS policy hone ke bawajood "permission denied (42501)" aa raha tha.
--- =====================================================================
-grant select on public.certificates to anon;
-grant all on public.certificates to authenticated;
-grant select on public.events to anon;
-grant all on public.events to authenticated;
-revoke all on public.admin_profiles from anon;
-grant select on public.admin_profiles to authenticated;
-revoke insert, update, delete on public.admin_profiles from authenticated;
-
--- Verify (sab me rows ya [] aana chahiye, 42501 NAHI):
--- select * from public.certificates limit 1;
--- =====================================================================
 
 -- 6. RPC: SuperAdmin → Department Admin create
 -- SECURITY DEFINER lets this function create Auth and profile rows;
@@ -232,7 +243,7 @@ $$;
 -- 6b. RPC: SuperAdmin → suspend / restore department admin
 -- is_active = false → admin ka access temporary stop (sign-in block).
 -- Existing DB par ye block alag se bhi chala sakte hain:
---   supabase/fix_admin_access.sql (gen_salt fix ke saath)
+--   supabase/upgrade_existing.sql (gen_salt fix ke saath)
 create or replace function public.set_admin_access(
   p_admin_id uuid,
   p_active boolean

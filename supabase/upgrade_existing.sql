@@ -1,21 +1,89 @@
--- =====================================================================
--- FIX: gen_salt error + SuperAdmin access-control (suspend / remove admin)
--- Supabase Dashboard → SQL Editor → New Query → ye poori file paste → Run
---
--- Kya fix hota hai:
---   1. "function gen_salt(unknown) does not exist" — pgcrypto ke functions
---      Supabase me aksar `extensions` schema me hote hain, aur hamari RPC ka
---      search_path = public tha. Ab function dono schemas me dhoondta hai.
---   2. SuperAdmin ab department admin ko SUSPEND (temporary access stop)
---      aur REMOVE (permanently hata) sakta hai — naye RPC ke through.
---   3. Admin creation RPC is limited to active Super Admins; missing email
---      identity rows for existing department-admin profiles can be repaired.
--- =====================================================================
+-- Upgrade an EXISTING project to the current schema.
+-- Supabase Dashboard → SQL Editor → run this entire file once.
+-- Fresh projects should run schema.sql instead.
+
+create extension if not exists pgcrypto;
 
 -- FIX-2: admin_profiles me is_active column
 -- false = admin ka access temporarily suspended (sign-in block)
 alter table public.admin_profiles
   add column if not exists is_active boolean not null default true;
+
+alter table public.certificates
+  add column if not exists uploaded_certificate_no text;
+create index if not exists idx_certs_uploaded
+  on public.certificates (uploaded_certificate_no);
+
+-- Apply the same public-read / authenticated-write policies as fresh installs.
+alter table public.admin_profiles enable row level security;
+alter table public.events enable row level security;
+alter table public.certificates enable row level security;
+
+revoke insert, update, delete on public.events from public, anon;
+revoke insert, update, delete on public.certificates from public, anon;
+grant select on public.events to anon;
+grant all on public.events to authenticated;
+grant select on public.certificates to anon;
+grant all on public.certificates to authenticated;
+grant select, insert, update, delete on storage.objects to authenticated;
+
+drop policy if exists "public read events" on public.events;
+drop policy if exists "authenticated read events" on public.events;
+create policy "public read events"
+  on public.events for select
+  to anon
+  using (is_published = true);
+create policy "authenticated read events"
+  on public.events for select
+  to authenticated
+  using (true);
+drop policy if exists "open write events" on public.events;
+drop policy if exists "authenticated write events" on public.events;
+create policy "authenticated write events"
+  on public.events for all
+  to authenticated
+  using (true) with check (true);
+revoke insert, update, delete on public.events from public, anon;
+
+drop policy if exists "public read certificates" on public.certificates;
+drop policy if exists "authenticated read certificates" on public.certificates;
+create policy "public read certificates"
+  on public.certificates for select
+  to anon
+  using (true);
+create policy "authenticated read certificates"
+  on public.certificates for select
+  to authenticated
+  using (true);
+drop policy if exists "open write certificates" on public.certificates;
+drop policy if exists "authenticated write certificates" on public.certificates;
+create policy "authenticated write certificates"
+  on public.certificates for all
+  to authenticated
+  using (true) with check (true);
+revoke insert, update, delete on public.certificates from public, anon;
+
+drop policy if exists "open update templates" on storage.objects;
+drop policy if exists "open delete templates" on storage.objects;
+drop policy if exists "authenticated upload templates" on storage.objects;
+drop policy if exists "authenticated update templates" on storage.objects;
+drop policy if exists "authenticated delete templates" on storage.objects;
+drop policy if exists "public read templates" on storage.objects;
+create policy "public read templates"
+  on storage.objects for select
+  using (bucket_id = 'templates');
+create policy "authenticated upload templates"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'templates');
+create policy "authenticated update templates"
+  on storage.objects for update
+  to authenticated
+  using (bucket_id = 'templates') with check (bucket_id = 'templates');
+create policy "authenticated delete templates"
+  on storage.objects for delete
+  to authenticated
+  using (bucket_id = 'templates');
 
 -- Profile writes must stay server/database-only. A self-update policy is
 -- insufficient because it still allows changing the caller's role.
@@ -29,13 +97,9 @@ create policy "authenticated read admin_profiles"
   on public.admin_profiles for select
   to authenticated
   using (true);
-revoke all on public.admin_profiles from anon;
+revoke all on public.admin_profiles from public, anon;
 revoke insert, update, delete on public.admin_profiles from authenticated;
 grant select on public.admin_profiles to authenticated;
-
--- FIX-1: pgcrypto + create_department_admin recreate
--- (ye line no-op hai agar extension pehle se kahin bhi installed hai)
-create extension if not exists pgcrypto;
 
 create or replace function public.create_department_admin(
   p_email text,
@@ -252,6 +316,5 @@ grant execute on function public.remove_department_admin(uuid) to authenticated;
 --   select email, role, is_active from public.admin_profiles order by created_at;
 --   select proname, prosecdef from pg_proc
 --     where proname in ('create_department_admin','set_admin_access','remove_department_admin');
--- Uske baad app me SuperAdmin console → Registered Department Administrators
--- table me Suspend / Restore / Remove buttons dikhne lagenge.
+-- Verify public reads, admin login, and Super Admin suspend/remove actions.
 -- =====================================================================

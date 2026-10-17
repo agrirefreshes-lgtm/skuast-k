@@ -21,7 +21,7 @@ A comprehensive, tamper-proof digital certificate management platform built for 
 | --- | --- |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS |
 | Routing | React Router DOM |
-| Backend | Supabase (PostgreSQL), Edge Functions |
+| Backend | Supabase (Auth, PostgreSQL, Storage) |
 | PDF Generation | jsPDF, html2canvas |
 | QR Code | @zxing/browser, qrcode.react |
 | File Upload | xlsx (Excel/CSV) |
@@ -31,11 +31,15 @@ A comprehensive, tamper-proof digital certificate management platform built for 
 ```bash
 # Clone the repository
 git clone https://github.com/agrirefreshes-lgtm/skuast-k.git
-cd skuastk-cert-system
+cd skuast-k
 
 # Install dependencies
 npm install
+```
 
+For local development, copy `.env.example` to `.env` (`Copy-Item .env.example .env` in PowerShell) and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. The ignored `.env` is your private local config; `.env.example` is the safe template committed to Git. They are intentionally different and should both remain.
+
+```bash
 # Start development server
 npm run dev
 
@@ -49,11 +53,20 @@ npm run preview
 ## Deployment
 
 ```bash
-# Build and deploy to GitHub Pages
-npm run deploy
+# Push to main; GitHub Actions builds and publishes GitHub Pages automatically
+git push origin main
 ```
 
-The deployed site is served from the /skuast-k/ base path. Update base in vite.config.ts for custom domains.
+The deployment workflow at `.github/workflows/deploy.yml` builds and tests the site before publishing `dist/` to the `gh-pages` branch. GitHub Pages must be configured to deploy from the `gh-pages` branch, root folder. Add the repository Actions secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under **Settings → Secrets and variables → Actions**; the workflow stops before deployment if either is missing.
+
+There is intentionally no local `gh-pages` deploy command: push code to `main` and check **Actions → Deploy to GitHub Pages** for the result. Do not commit `.env`; it is for local development only. The published site is served from `/skuast-k/`.
+
+The page components load with the app shell for immediate route navigation; large spreadsheet, PDF/image export, and camera-scanning libraries are split into feature chunks and loaded only when those actions are used.
+
+### Supabase SQL files
+
+- `supabase/schema.sql` — secure schema for a fresh project.
+- `supabase/upgrade_existing.sql` — combined, idempotent upgrade for an existing project (RLS hardening, admin login fix, and the uploaded certificate column). Run this instead of separately running legacy SQL snippets.
 
 ## Architecture
 

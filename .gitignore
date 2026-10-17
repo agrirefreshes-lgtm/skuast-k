@@ -29,7 +29,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# Environment files (contain secrets - never commit)
-.env
-.env.local
-.env.*.local
+# Environment files (contain secrets - never commit); keep only the template.
+.env*
+!.env.example

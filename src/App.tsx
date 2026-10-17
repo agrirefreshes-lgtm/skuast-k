@@ -1,37 +1,14 @@
-import React, { Suspense, lazy } from 'react';
+import React from 'react';
 import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { ToastProvider } from './components/Toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
 import { PromptProvider } from './components/PromptDialog';
-
-// Route-level code splitting: the heavy admin bundle (xlsx import, certificate
-// editor) loads only on /admin — public QR-shared pages stay light on mobile.
-const UserPortal = lazy(() =>
-  import('./pages/UserPortal').then((m) => ({ default: m.UserPortal }))
-);
-const AdminDashboard = lazy(() =>
-  import('./pages/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
-);
-const PublicVerification = lazy(() =>
-  import('./pages/PublicVerification').then((m) => ({ default: m.PublicVerification }))
-);
-const PublicEventDownload = lazy(() =>
-  import('./pages/PublicEventDownload').then((m) => ({ default: m.PublicEventDownload }))
-);
-
-const RouteFallback: React.FC = () => (
-  <div className="min-h-[60vh] flex items-center justify-center">
-    <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
-      <span
-        className="h-5 w-5 rounded-full border-2 border-emerald-700 border-t-transparent animate-spin"
-        aria-hidden="true"
-      />
-      Loading…
-    </div>
-  </div>
-);
+import { UserPortal } from './pages/UserPortal';
+import { AdminDashboard } from './pages/AdminDashboard';
+import { PublicVerification } from './pages/PublicVerification';
+import { PublicEventDownload } from './pages/PublicEventDownload';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -104,7 +81,6 @@ function App() {
               {/* Dynamic Page Views */}
               <main className="flex-1">
                 <ErrorBoundary>
-                  <Suspense fallback={<RouteFallback />}>
                   <Routes>
                     {/* Main University Home Search */}
                     <Route path="/" element={<UserPortal />} />
@@ -118,7 +94,6 @@ function App() {
                     {/* QR Scan Verification Gateway */}
                     <Route path="/verify" element={<PublicVerification />} />
                   </Routes>
-                  </Suspense>
                 </ErrorBoundary>
               </main>
 

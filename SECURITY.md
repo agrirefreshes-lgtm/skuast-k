@@ -22,9 +22,7 @@
 
 ### 3. **Missing Database Column** ✅ FIXED
 **Issue:** `uploaded_certificate_no` column missing from certificates table.
-**Fix:** Created migration `supabase/migration_uploaded_column.sql`.
-
-**Run Migration:** Supabase Dashboard → SQL Editor → paste and Run
+**Fix:** Added the column to the fresh schema and consolidated the existing-project upgrade into `supabase/upgrade_existing.sql`.
 
 ---
 
@@ -77,7 +75,7 @@ Cache-Control headers set: `no-cache, no-store, must-revalidate`
 
 ### 11. **Department Admin Login & Creation**
 - Dashboard creation uses the existing `create_department_admin` database RPC; no service-role key is shipped to the browser.
-- On an existing project, run `supabase/fix_admin_access.sql` in the Supabase SQL Editor to install the guarded RPC and restrict its execute permission to authenticated callers.
+- On an existing project, run `supabase/upgrade_existing.sql` in the Supabase SQL Editor to install the guarded RPC, secure policies, and required column upgrade.
 - The upgrade script repairs missing email identity rows for department admins. It does not reset passwords or repair incorrect password hashes.
 - Admin login uses Supabase Auth email/password and only opens the console when the user has an active `admin` or `super_admin` profile.
 - If `create-department-admin` was deployed separately in Supabase, remove it from Dashboard → Edge Functions (or with the Supabase CLI) after deploying this RPC-only frontend.
@@ -89,7 +87,7 @@ Cache-Control headers set: `no-cache, no-store, must-revalidate`
 ## Security Tests Summary
 
 ```
-✅ 38/38 tests passing
+✅ 46/46 tests passing
 
 Security (16 tests): SEC-001 to SEC-061
 Performance (10 tests): PERF-001 to PERF-051

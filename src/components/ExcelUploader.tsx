@@ -1,5 +1,4 @@
 import React from 'react';
-import * as XLSX from 'xlsx';
 import { UploadCloud, FileSpreadsheet } from 'lucide-react';
 import type { UploadedColumnDefinition } from '../types/certificate';
 import { parseDelimitedText, recordsFromRows } from '../lib/certificateFields';
@@ -62,13 +61,27 @@ export const ExcelUploader: React.FC<Props> = ({ onParsed }) => {
 
     // Excel (.xlsx / .xls)
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       const bstr = evt.target?.result;
-      if (!bstr) return;
+      if (!bstr) {
+        toast.error('Could not read file', 'The spreadsheet could not be read. Please try again.');
+        e.target.value = '';
+        return;
+      }
 
-      let wb;
+      let xlsxModule: typeof import('xlsx');
       try {
-        wb = XLSX.read(bstr, { type: 'binary', cellDates: false });
+        xlsxModule = await import('xlsx');
+      } catch (err: unknown) {
+        console.error('Spreadsheet tools could not load:', err);
+        toast.error('Spreadsheet tools unavailable', 'Please refresh the page and try again.');
+        e.target.value = '';
+        return;
+      }
+
+      let wb: ReturnType<typeof xlsxModule.read>;
+      try {
+        wb = xlsxModule.read(bstr, { type: 'binary', cellDates: false });
       } catch {
         toast.error('Unsupported file', 'This file appears to be corrupt or is not a supported spreadsheet format.');
         e.target.value = '';
@@ -83,7 +96,7 @@ export const ExcelUploader: React.FC<Props> = ({ onParsed }) => {
       }
 
       const ws = wb.Sheets[sheetName];
-      const rawData = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
+      const rawData = xlsxModule.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
       const { records, columns } = recordsFromRows(rawData);
 
       if (records.length === 0) {

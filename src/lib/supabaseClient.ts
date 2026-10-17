@@ -10,7 +10,7 @@ import { createClient } from '@supabase/supabase-js';
 //
 // SECURITY NOTE: the publishable key is safe to expose in the browser
 // bundle BY DESIGN — your data is protected by Row Level Security (see
-// supabase/schema_secure_rls.sql). Never put a service_role / secret key
+// supabase/schema.sql or supabase/upgrade_existing.sql). Never put a service_role / secret key
 // in VITE_ variables or this file.
 
 // Detect runtime so we can read env vars in the right way per environment.

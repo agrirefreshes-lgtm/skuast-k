@@ -1,6 +1,4 @@
 ﻿import React, { useRef, useState, useEffect, useCallback } from 'react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import type { EventItem, IssuedCertificate, DynamicFieldDef } from '../types/certificate';
 import { QRCodeSVG } from 'qrcode.react';
 import { getVerifyUrl } from '../lib/shareUrl';
@@ -464,6 +462,10 @@ export const CertificateCanvas: React.FC<Props> = ({ event, cert, onUpdateEvent,
     fontMetricsFix.textContent = 'body > div:not([id]) > img { display: inline-block !important; }';
     document.head.appendChild(fontMetricsFix);
     try {
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ]);
       await new Promise<void>((resolve) => setTimeout(() => resolve(), 60));
       const canvas = await html2canvas(containerRef.current, {
         scale: 2,

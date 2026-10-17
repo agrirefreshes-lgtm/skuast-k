@@ -1,11 +1,9 @@
 /**
  * SKUAST-K — Performance Test: Bundle, Render, Memory
  *
- * NOTE on PERF-001/002: the app intentionally ships several vendor chunks
- * (react, supabase, xlsx, jspdf/html2canvas, zxing). Mobile browsers on a
- * public route only download the route chunk + the shared vendors that
- * route needs — so totals here are a deploy-size ceiling, and PERF-002
- * guards that the heavy admin-only vendors stay in their own chunks.
+ * PERF-001/002 guard the deploy size and keep optional heavy features
+ * (spreadsheet import/export, PDF/image export, and camera QR scanning)
+ * in separate chunks that load only when those features are used.
  */
 
 import test from 'node:test';
@@ -53,15 +51,32 @@ test('PERF-002: Heavy vendors are code-split (no single oversized chunk)', () =>
   const distDir = join(process.cwd(), 'dist');
   const jsFiles = listFilesRecursive(distDir).filter((f) => f.endsWith('.js'));
 
-  // Admin-only weight (xlsx import, pdf export) must ship as separate chunks
-  // so public QR-shared routes never force mobile browsers to download it.
   const names = jsFiles.map((f) => f.split(/[\\/]/).pop());
-  for (const expected of ['vendor-xlsx', 'vendor-pdf', 'vendor-qr']) {
+  for (const expected of [
+    'vendor-xlsx',
+    'vendor-html2canvas',
+    'vendor-qrcode',
+    'vendor-zxing',
+  ]) {
     assert.ok(
       names.some((n) => n.startsWith(expected)),
       `Expected a separate ${expected} chunk in dist/assets`
     );
   }
+  assert.ok(
+    names.some((n) => /jspdf/i.test(n)),
+    'Expected jsPDF in a separate on-demand chunk'
+  );
+
+  const html = readFileSync(join(distDir, 'index.html'), 'utf8');
+  const modulePreloads = [...html.matchAll(/<link[^>]+rel="modulepreload"[^>]*>/g)]
+    .map((match) => match[0])
+    .join('\n');
+  assert.doesNotMatch(
+    modulePreloads,
+    /vendor-xlsx|vendor-html2canvas|jspdf|vendor-zxing/i,
+    'Spreadsheet, PDF, and camera-scanning libraries should not preload with the app shell'
+  );
 
   let largest = 0;
   let largestName = '';
@@ -75,7 +90,7 @@ test('PERF-002: Heavy vendors are code-split (no single oversized chunk)', () =>
     } catch {}
   }
   console.log(`    Largest JS chunk: ${(largest / 1024).toFixed(2)} KB (${largestName})`);
-  assert.ok(largest < 650 * 1024, `Single chunk too large: ${(largest / 1024).toFixed(2)} KB (expected < 650 KB)`);
+  assert.ok(largest < 500 * 1024, `Single chunk too large: ${(largest / 1024).toFixed(2)} KB (expected < 500 KB)`);
 });
 
 test('PERF-003: Main bundle size is reasonable for load time', () => {
@@ -99,15 +114,24 @@ test('PERF-003: Main bundle size is reasonable for load time', () => {
 
 // ─── 2. RENDER PERFORMANCE TESTS ──────────────────────────────────────────────
 
-test('PERF-010: React routes resolve and share a lazy-loaded shell (relaxed for CI)', async () => {
+test('PERF-010: React routes are eagerly available and heavy feature libraries load on demand', async () => {
   const start = performance.now();
 
   const appContent = readFileSync(join(process.cwd(), 'src', 'App.tsx'), 'utf8');
   assert.ok(appContent.length > 100, 'App.tsx should have content');
-  // Routes are lazy-loaded so the first paint stays light on mobile; the
-  // Suspense shell must always be present or a slow chunk = blank page.
-  assert.ok(appContent.includes('lazy('), 'App.tsx should lazy-load routes');
-  assert.ok(appContent.includes('Suspense'), 'App.tsx should wrap lazy routes in Suspense');
+  assert.ok(!appContent.includes('lazy('), 'Route pages should be ready without navigation-time lazy loading');
+  for (const page of ['UserPortal', 'AdminDashboard', 'PublicVerification', 'PublicEventDownload']) {
+    assert.ok(appContent.includes(`./pages/${page}`), `${page} should be imported by the app shell`);
+  }
+
+  const uploader = readFileSync(join(process.cwd(), 'src', 'components', 'ExcelUploader.tsx'), 'utf8');
+  const dashboard = readFileSync(join(process.cwd(), 'src', 'pages', 'AdminDashboard.tsx'), 'utf8');
+  const canvas = readFileSync(join(process.cwd(), 'src', 'components', 'CertificateCanvas.tsx'), 'utf8');
+  const verification = readFileSync(join(process.cwd(), 'src', 'pages', 'PublicVerification.tsx'), 'utf8');
+  assert.ok(uploader.includes("import('xlsx')"), 'Excel import should load only when a spreadsheet is uploaded');
+  assert.ok(dashboard.includes("import('xlsx')"), 'Excel export should load only when requested');
+  assert.ok(canvas.includes("import('jspdf')") && canvas.includes("import('html2canvas')"), 'PDF export libraries should load only when requested');
+  assert.ok(verification.includes("import('@zxing/browser')"), 'Camera scanning should load only when camera mode is selected');
 
   const mainContent = readFileSync(join(process.cwd(), 'src', 'main.tsx'), 'utf8');
   assert.ok(mainContent.length > 50, 'main.tsx should have content');

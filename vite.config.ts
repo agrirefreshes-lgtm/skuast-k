@@ -9,7 +9,7 @@ export default defineConfig({
     // Keep the first paint light: public QR-shared pages must not force
     // mobile browsers to download the admin-only xlsx/pdf-editing code.
     // (Vite 8 runs on Rolldown: vendor splitting uses codeSplitting.)
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 500,
     rollupOptions: {
       output: {
         codeSplitting: {
@@ -17,8 +17,9 @@ export default defineConfig({
             { name: 'vendor-react', test: /node_modules[\\/](react|react-dom|react-router-dom|scheduler)[\\/]/ },
             { name: 'vendor-supabase', test: /node_modules[\\/]@supabase[\\/]/ },
             { name: 'vendor-xlsx', test: /node_modules[\\/]xlsx[\\/]/ },
-            { name: 'vendor-pdf', test: /node_modules[\\/](jspdf|html2canvas)[\\/]/ },
-            { name: 'vendor-qr', test: /node_modules[\\/](qrcode\.react|@zxing)[\\/]/ },
+            { name: 'vendor-html2canvas', test: /node_modules[\\/]html2canvas[\\/]/ },
+            { name: 'vendor-qrcode', test: /node_modules[\\/]qrcode\.react[\\/]/ },
+            { name: 'vendor-zxing', test: /node_modules[\\/]@zxing[\\/]/ },
           ],
         },
       },

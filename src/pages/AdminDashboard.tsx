@@ -1,6 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import * as XLSX from 'xlsx';
 import type { EventItem, IssuedCertificate, UploadedBatch, UploadedColumnDefinition } from '../types/certificate';
 import { ExcelUploader } from '../components/ExcelUploader';
 import { CertificateCanvas } from '../components/CertificateCanvas';
@@ -344,10 +343,10 @@ export const AdminDashboard: React.FC = () => {
 
   // Authenticated + profile loaded -> render dashboard
 
-  // Agar DB fix (supabase/fix_admin_access.sql) pending hai to error me seedha hint
+  // Agar DB upgrade pending hai to error me seedha hint
   const sqlFixHint = (msg: string) =>
     /does not exist|gen_salt/i.test(msg)
-      ? `${msg} — Database fix pending: Supabase SQL Editor me supabase/fix_admin_access.sql chalayein.`
+      ? `${msg} — Database upgrade pending: Supabase SQL Editor me supabase/upgrade_existing.sql chalayein.`
       : msg;
 
   const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
@@ -934,26 +933,34 @@ export const AdminDashboard: React.FC = () => {
     toast.success('Batch deleted', 'The batch and its certificates were removed.');
   };
 
-  const handleExportEventExcel = () => {
+  const handleExportEventExcel = async () => {
     if (certificates.length === 0) {
       toast.warning('Nothing to export', 'Upload certificates before exporting the master list.');
       return;
     }
-    const exportRows = certificates.map((c) => {
-      const { certificate_no: _dup1, Certificate_No: _dup2, ...restData } = (c.data || {}) as Record<string, string>;
-      void _dup1; void _dup2;
-      return {
-        'Certificate No': c.certificate_no,
-        Status: c.status,
-        'Issue Date': c.issue_date,
-        ...restData,
-      };
-    });
+    try {
+      const XLSX = await import('xlsx');
+      const exportRows = certificates.map((c) => {
+        const { certificate_no: _dup1, Certificate_No: _dup2, ...restData } = (c.data || {}) as Record<string, string>;
+        void _dup1; void _dup2;
+        return {
+          'Certificate No': c.certificate_no,
+          Status: c.status,
+          'Issue Date': c.issue_date,
+          ...restData,
+        };
+      });
 
-    const ws = XLSX.utils.json_to_sheet(exportRows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Certificates');
-    XLSX.writeFile(wb, `${currentEvent.name.replace(/\s+/g, '_')}_Official_List.xlsx`);
+      const ws = XLSX.utils.json_to_sheet(exportRows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Certificates');
+      XLSX.writeFile(wb, `${currentEvent.name.replace(/\s+/g, '_')}_Official_List.xlsx`);
+    } catch (err: unknown) {
+      toast.error(
+        'Excel export failed',
+        err instanceof Error ? err.message : 'Could not prepare the spreadsheet. Please try again.'
+      );
+    }
   };
 
   const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];

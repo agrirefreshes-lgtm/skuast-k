@@ -1,8 +1,7 @@
 name: Deploy to GitHub Pages
 
 # Automatically build and publish the site to the `gh-pages` branch whenever
-# code is pushed to `main` (or run manually from the Actions tab). This removes
-# the need to run `npm run deploy` by hand.
+# code is pushed to `main` (or run manually from the Actions tab).
 on:
   push:
     branches: [main]
@@ -27,7 +26,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies (clean, from lockfile)
@@ -50,6 +49,12 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
+      - name: Run tests
+        run: npm test
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
       - name: Deploy dist/ to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
@@ -60,7 +65,6 @@ jobs:
           # Vite's underscore-prefixed asset folders are not stripped.
           enable_jekyll: false
           # Replace the branch content with exactly this dist/ (orphan commit):
-          # hashed Vite assets change names every build, so a merge-style
-          # publish would pile up stale index-*.js files on gh-pages forever.
-          # Manual `npm run deploy` from a laptop does the same replacement.
+          # Hashed Vite assets change names every build; replace the branch so
+          # stale index-*.js assets do not accumulate.
           force_orphan: true

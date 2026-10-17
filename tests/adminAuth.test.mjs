@@ -8,7 +8,7 @@ const read = (...parts) => readFileSync(join(process.cwd(), ...parts), 'utf8');
 test('admin creation uses only the existing guarded RPC', () => {
   const dashboard = read('src', 'pages', 'AdminDashboard.tsx');
   const schema = read('supabase', 'schema.sql');
-  const upgrade = read('supabase', 'fix_admin_access.sql');
+  const upgrade = read('supabase', 'upgrade_existing.sql');
 
   assert.match(dashboard, /supabase\.rpc\('create_department_admin'/);
   assert.doesNotMatch(dashboard, /functions\.invoke|create-department-admin/);
@@ -32,7 +32,7 @@ test('admin console requires a valid admin profile and preserves exact passwords
 });
 
 test('broken-account identity repair is scoped to department admins', () => {
-  const upgrade = read('supabase', 'fix_admin_access.sql');
+  const upgrade = read('supabase', 'upgrade_existing.sql');
 
   assert.match(upgrade, /join public\.admin_profiles ap on ap\.id = u\.id and ap\.role = 'admin'/i);
   assert.match(upgrade, /not exists\s*\(\s*select 1 from auth\.identities i\s*where i\.user_id = u\.id and i\.provider = 'email'/i);
