@@ -355,7 +355,7 @@ export const AdminDashboard: React.FC = () => {
     setCreatingAdmin(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke<{ id: string; email: string }>(
+      const { data, error } = await supabase.functions.invoke<unknown>(
         'create-department-admin',
         {
           body: {
@@ -392,8 +392,43 @@ export const AdminDashboard: React.FC = () => {
         throw new Error(detail);
       }
 
-      if (!data || typeof data.id !== 'string') {
-        throw new Error('The Auth service did not confirm the account was created.');
+      const response =
+        data && typeof data === 'object' && !Array.isArray(data)
+          ? data as Record<string, unknown>
+          : null;
+      const nestedUser =
+        response?.user && typeof response.user === 'object' && !Array.isArray(response.user)
+          ? response.user as Record<string, unknown>
+          : null;
+      const returnedId =
+        typeof response?.id === 'string'
+          ? response.id
+          : typeof nestedUser?.id === 'string'
+            ? nestedUser.id
+            : null;
+
+      if (!returnedId) {
+        const { data: createdProfile, error: verificationError } = await supabase
+          .from('admin_profiles')
+          .select('id, role, is_active')
+          .eq('email', newAdminEmail.trim().toLowerCase())
+          .maybeSingle();
+
+        if (verificationError) {
+          throw new Error(
+            `The creation service returned success, but the new admin could not be verified: ${verificationError.message}`
+          );
+        }
+        if (
+          !createdProfile ||
+          createdProfile.role !== 'admin' ||
+          createdProfile.is_active === false
+        ) {
+          const fields = response ? Object.keys(response).join(', ') || 'none' : 'none';
+          throw new Error(
+            `The creation service returned success without confirming an active admin account (response fields: ${fields}). Check the Edge Function deployment and logs before retrying.`
+          );
+        }
       }
 
       toast.success('Department admin created', `Access granted to ${newAdminEmail}. They can now sign in from the Admin tab.`);

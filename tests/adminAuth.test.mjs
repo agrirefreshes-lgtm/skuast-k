@@ -13,6 +13,9 @@ test('admin creation uses the guarded Supabase Auth Admin API Edge Function', ()
 
   assert.match(dashboard, /supabase\.functions\.invoke[^]*create-department-admin/);
   assert.doesNotMatch(dashboard, /rpc\('create_department_admin'/);
+  assert.match(dashboard, /typeof nestedUser\?\.id === 'string'/);
+  assert.match(dashboard, /new admin could not be verified/);
+  assert.match(dashboard, /createdProfile\.role !== 'admin'/);
   assert.match(edgeFunction, /supabase\.auth\.admin\.createUser/);
   assert.match(edgeFunction, /supabase\.auth\.getUser\(accessToken\)/);
   assert.match(edgeFunction, /callerProfile\?\.role !== 'super_admin'/);
