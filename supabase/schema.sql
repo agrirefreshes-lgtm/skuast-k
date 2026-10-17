@@ -3,7 +3,7 @@
 -- =====================================================================
 -- Creates: admin_profiles, events, certificates, storage bucket
 --          templates/, RLS policies (anon-key app compatible),
---          RPC create_department_admin(p_email, p_password, p_department)
+--          RPCs for suspending/removing department admins
 -- Browser uses the public anon key; RLS policies restrict public access.
 -- Never put a service-role key in the frontend.
 -- =====================================================================
@@ -158,92 +158,8 @@ create policy "authenticated delete templates"
   to authenticated
   using (bucket_id = 'templates');
 
--- 6. RPC: SuperAdmin → Department Admin create
--- SECURITY DEFINER lets this function create Auth and profile rows;
--- execution is restricted below and the caller is checked server-side.
-create or replace function public.create_department_admin(
-  p_email text,
-  p_password text,
-  p_department text
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = pg_catalog, public, extensions
-as $$
-declare
-  v_uid uuid;
-  v_email text := lower(btrim(p_email));
-  v_department text := coalesce(nullif(btrim(p_department), ''), 'Academic Department');
-begin
-  if auth.uid() is null or not exists (
-    select 1
-    from public.admin_profiles ap
-    where ap.id = auth.uid()
-      and ap.role = 'super_admin'
-      and ap.is_active = true
-  ) then
-    raise exception 'Only an active Super Admin can create department admins';
-  end if;
-
-  if v_email is null
-     or length(v_email) > 254
-     or v_email !~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' then
-    raise exception 'A valid email address is required';
-  end if;
-  if p_password is null or char_length(p_password) < 6 then
-    raise exception 'Password min 6 chars required';
-  end if;
-  if char_length(v_department) > 160 then
-    raise exception 'Department name must be 160 characters or fewer';
-  end if;
-
-  -- Clear error agar login account pehle se exist karta hai
-  if exists (select 1 from auth.users u where lower(u.email) = v_email) then
-    raise exception 'Login account with this email already exists (%)', v_email;
-  end if;
-
-  -- auth.users me naya login create
-  v_uid := gen_random_uuid();
-  insert into auth.users (
-    id, instance_id, aud, email, encrypted_password,
-    email_confirmed_at, created_at, updated_at,
-    raw_app_meta_data, raw_user_meta_data,
-    is_super_admin, role
-  ) values (
-    v_uid, '00000000-0000-0000-0000-000000000000',
-    'authenticated',
-    v_email,
-    crypt(p_password, gen_salt('bf', 10)),
-    now(), now(), now(),
-    '{"provider":"email","providers":["email"]}'::jsonb,
-    jsonb_build_object('department', v_department), false, 'authenticated'
-  );
-
-  -- ZAROORI: auth.identities row. Bina iske Supabase Auth (GoTrue) password
-  -- login me "Invalid login credentials" deta hai — user auth.users me
-  -- hone ke bawajood, kyunki login identity table se hi lookup hota hai.
-  insert into auth.identities (
-    provider_id, user_id, identity_data, provider,
-    created_at, updated_at
-  ) values (
-    v_uid::text, v_uid,
-    jsonb_build_object('sub', v_uid::text, 'email', v_email, 'email_verified', true),
-    'email', now(), now()
-  );
-
-  -- admin_profiles row (role = admin, is_active default true)
-  insert into public.admin_profiles (id, email, role, department, is_active)
-  values (v_uid, v_email, 'admin', v_department, true);
-
-  return jsonb_build_object('id', v_uid, 'email', v_email);
-end;
-$$;
-
--- 6b. RPC: SuperAdmin → suspend / restore department admin
+-- 6. RPC: SuperAdmin → suspend / restore department admin
 -- is_active = false → admin ka access temporary stop (sign-in block).
--- Existing DB par ye block alag se bhi chala sakte hain:
---   supabase/upgrade_existing.sql (gen_salt fix ke saath)
 create or replace function public.set_admin_access(
   p_admin_id uuid,
   p_active boolean
@@ -292,7 +208,7 @@ begin
 end;
 $$;
 
--- 6c. RPC: SuperAdmin → permanently remove department admin
+-- 6b. RPC: SuperAdmin → permanently remove department admin
 -- auth.users delete → admin_profiles ON DELETE CASCADE; events safe (created_by → NULL)
 create or replace function public.remove_department_admin(
   p_admin_id uuid
@@ -345,10 +261,8 @@ end;
 $$;
 
 -- SECURITY DEFINER admin RPCs must not be executable by anon or PUBLIC.
-revoke all on function public.create_department_admin(text, text, text) from public, anon, authenticated;
 revoke all on function public.set_admin_access(uuid, boolean) from public, anon, authenticated;
 revoke all on function public.remove_department_admin(uuid) from public, anon, authenticated;
-grant execute on function public.create_department_admin(text, text, text) to authenticated;
 grant execute on function public.set_admin_access(uuid, boolean) to authenticated;
 grant execute on function public.remove_department_admin(uuid) to authenticated;
 

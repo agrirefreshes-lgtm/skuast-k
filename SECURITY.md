@@ -74,13 +74,12 @@ Cache-Control headers set: `no-cache, no-store, must-revalidate`
 ---
 
 ### 11. **Department Admin Login & Creation**
-- Dashboard creation uses the existing `create_department_admin` database RPC; no service-role key is shipped to the browser.
-- On an existing project, run `supabase/upgrade_existing.sql` in the Supabase SQL Editor to install the guarded RPC, secure policies, and required column upgrade.
-- The upgrade script repairs missing email identity rows for department admins. It does not reset passwords or repair incorrect password hashes.
+- Dashboard creation uses the Supabase Auth Admin API through `supabase/functions/create-department-admin/index.ts`; the function verifies the caller's JWT and active `super_admin` profile before creating an account.
+- The service-role key is read only from the Edge Function runtime environment and is never included in the browser bundle.
+- Deploy the Edge Function before the frontend version that invokes it. Keep JWT verification enabled.
+- On an existing project, run `supabase/upgrade_existing.sql` in the Supabase SQL Editor to apply secure policies, remove the legacy direct-auth-creation RPC, and add the required certificate column.
+- The upgrade script repairs missing email identity rows for existing department admins but does not reset passwords or repair malformed Auth records. Remove a broken department-admin account and recreate it through the deployed Auth Admin function.
 - Admin login uses Supabase Auth email/password and only opens the console when the user has an active `admin` or `super_admin` profile.
-- If `create-department-admin` was deployed separately in Supabase, remove it from Dashboard → Edge Functions (or with the Supabase CLI) after deploying this RPC-only frontend.
-
-**Limitation:** The existing RPC writes to Supabase Auth's internal tables. This preserves the requested SQL-RPC architecture, but Supabase's supported Auth Admin API is more resilient to internal schema changes.
 
 ---
 

@@ -63,10 +63,21 @@ There is intentionally no local `gh-pages` deploy command: push code to `main` a
 
 The page components load with the app shell for immediate route navigation; large spreadsheet, PDF/image export, and camera-scanning libraries are split into feature chunks and loaded only when those actions are used.
 
+### Supabase admin creation function
+
+Department-admin accounts are created with Supabase's official Auth Admin API in `supabase/functions/create-department-admin/index.ts`; the browser never receives a service-role key. Deploy this function to the same Supabase project before publishing a frontend that invokes it:
+
+1. In Supabase Dashboard, open **Edge Functions** and create a function named `create-department-admin`.
+2. Deploy the source from `supabase/functions/create-department-admin/index.ts`.
+3. Keep JWT verification enabled. The function independently verifies the caller's session and requires an active `super_admin` profile.
+4. Push the frontend to `main` and verify the GitHub Pages deployment.
+
+Supabase supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the server-side function runtime. Never add the service-role key to GitHub Pages environment variables, `.env`, or frontend code.
+
 ### Supabase SQL files
 
 - `supabase/schema.sql` — secure schema for a fresh project.
-- `supabase/upgrade_existing.sql` — combined, idempotent upgrade for an existing project (RLS hardening, admin login fix, and the uploaded certificate column). Run this instead of separately running legacy SQL snippets.
+- `supabase/upgrade_existing.sql` — combined, idempotent upgrade for an existing project (RLS hardening, legacy admin-creation RPC removal, and the uploaded certificate column). Run this instead of separately running legacy SQL snippets.
 
 ## Architecture
 

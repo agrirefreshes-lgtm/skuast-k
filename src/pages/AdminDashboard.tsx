@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type { EventItem, IssuedCertificate, UploadedBatch, UploadedColumnDefinition } from '../types/certificate';
 import { ExcelUploader } from '../components/ExcelUploader';
@@ -354,18 +355,45 @@ export const AdminDashboard: React.FC = () => {
     setCreatingAdmin(true);
 
     try {
-      const { data, error } = await supabase.rpc('create_department_admin', {
-        p_email: newAdminEmail.trim().toLowerCase(),
-        p_password: newAdminPassword,
-        p_department: newAdminDept.trim()
-      });
+      const { data, error } = await supabase.functions.invoke<{ id: string; email: string }>(
+        'create-department-admin',
+        {
+          body: {
+            email: newAdminEmail.trim().toLowerCase(),
+            password: newAdminPassword,
+            department: newAdminDept.trim(),
+          },
+        }
+      );
 
       if (error) {
-        throw new Error(sqlFixHint(error.message || 'Please check the details and try again.'));
+        let detail = error.message;
+        if (error instanceof FunctionsHttpError && error.context instanceof Response) {
+          const responseBody = await error.context.clone().text();
+          if (responseBody) {
+            try {
+              const payload: unknown = JSON.parse(responseBody);
+              if (payload && typeof payload === 'object') {
+                const responseMessage =
+                  'error' in payload && typeof payload.error === 'string'
+                    ? payload.error
+                    : 'message' in payload && typeof payload.message === 'string'
+                      ? payload.message
+                      : null;
+                detail = responseMessage || responseBody;
+              } else {
+                detail = responseBody;
+              }
+            } catch {
+              detail = responseBody;
+            }
+          }
+        }
+        throw new Error(detail);
       }
 
-      if (!data || typeof data !== 'object' || typeof data.id !== 'string') {
-        throw new Error('The database did not confirm the admin account was created. Please check the admin directory before retrying.');
+      if (!data || typeof data.id !== 'string') {
+        throw new Error('The Auth service did not confirm the account was created.');
       }
 
       toast.success('Department admin created', `Access granted to ${newAdminEmail}. They can now sign in from the Admin tab.`);
@@ -376,7 +404,7 @@ export const AdminDashboard: React.FC = () => {
     } catch (err: unknown) {
       toast.error(
         'Could not create department admin',
-        sqlFixHint(err instanceof Error ? err.message : 'Please check the details and try again.')
+        err instanceof Error ? err.message : 'Please check the details and try again.'
       );
     } finally {
       setCreatingAdmin(false);
