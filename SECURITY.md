@@ -76,6 +76,8 @@ Cache-Control headers set: `no-cache, no-store, must-revalidate`
 ### 11. **Department Admin Login & Creation**
 - Dashboard creation uses the Supabase Auth Admin API through `supabase/functions/create-department-admin/index.ts`; the function verifies the caller's JWT and active `super_admin` profile before creating an account and active profile.
 - Suspend/restore/remove operations use `supabase/functions/manage-department-admin/index.ts`; removed admins' event and certificate ownership is transferred to the Super Admin before account deletion.
+- Super Admins can set a 12-character minimum new password for a department admin. The password is sent only over the authenticated Edge Function request and is not stored in the admin directory; share it with the recipient through a separate secure channel.
+- The Super Admin dashboard shows each registered admin's event count and per-event public/draft and download-enabled/paused status. Existing suspended profiles remain listed and removable.
 - Public QR and event-download certificate lookups use `supabase/functions/verify-certificate/index.ts`. Anonymous clients have no direct certificate-table access; QR responses exclude configured private-field markers, and downloads require the event's two identity values.
 - The service-role key is read only from the Edge Function runtime environment and is never included in the browser bundle.
 - On an existing project, back up the project, deploy all three Edge Functions, then run `supabase/upgrade_existing.sql` and publish the frontend in one maintenance window. The upgrade removes legacy direct-auth RPCs, revokes anonymous certificate access, and applies event-ownership policies; the old frontend must not remain live after that point.

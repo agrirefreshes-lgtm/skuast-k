@@ -4,7 +4,13 @@ import {
   optionsResponse,
 } from '../_shared/admin-auth.ts';
 
-type Action = 'suspend' | 'restore' | 'remove';
+type Action = 'suspend' | 'restore' | 'remove' | 'reset-password';
+
+const isAction = (value: unknown): value is Action =>
+  value === 'suspend' ||
+  value === 'restore' ||
+  value === 'remove' ||
+  value === 'reset-password';
 
 Deno.serve(async (request: Request): Promise<Response> => {
   if (request.method === 'OPTIONS') return optionsResponse(request);
@@ -27,9 +33,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return jsonResponse(request, { error: 'Invalid admin management request.' }, 400);
     }
 
-    const { action, adminId } = body as Record<string, unknown>;
+    const { action, adminId, password } = body as Record<string, unknown>;
     if (
-      !['suspend', 'restore', 'remove'].includes(String(action)) ||
+      !isAction(action) ||
       typeof adminId !== 'string' ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(adminId)
     ) {
@@ -50,6 +56,24 @@ Deno.serve(async (request: Request): Promise<Response> => {
     }
     if (!target || target.role !== 'admin') {
       return jsonResponse(request, { error: 'Department admin not found.' }, 404);
+    }
+
+    if (action === 'reset-password') {
+      if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
+        return jsonResponse(request, { error: 'The new password must be between 12 and 128 characters.' }, 400);
+      }
+      const { error: passwordError } = await client.auth.admin.updateUserById(adminId, {
+        password,
+      });
+      if (passwordError) {
+        console.error('Could not reset department-admin password:', passwordError.message);
+        return jsonResponse(request, { error: 'The department-admin password could not be reset.' }, 500);
+      }
+      console.info('Department-admin password reset by Super Admin.', {
+        actorId: caller.id,
+        targetAdminId: adminId,
+      });
+      return jsonResponse(request, { ok: true, action, adminId });
     }
 
     if (action === 'remove') {

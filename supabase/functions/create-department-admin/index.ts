@@ -43,8 +43,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
     if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return jsonResponse(request, { error: 'A valid email address is required.' }, 400);
     }
-    if (password.length < 8) {
-      return jsonResponse(request, { error: 'Password must be at least 8 characters.' }, 400);
+    if (password.length < 12 || password.length > 128) {
+      return jsonResponse(request, { error: 'Password must be between 12 and 128 characters.' }, 400);
     }
     if (department.length > 160) {
       return jsonResponse(request, { error: 'Department name must be 160 characters or fewer.' }, 400);

@@ -17,7 +17,9 @@ test('admin creation uses a guarded Auth Admin API with a strict response contra
   assert.match(dashboard, /response\?\.ok !== true/);
   assert.match(dashboard, /nestedAdmin\.role !== 'admin'/);
   assert.match(dashboard, /createdProfile\.is_active !== true/);
+  assert.match(dashboard, /minLength=\{12\}/);
   assert.match(edgeFunction, /client\.auth\.admin\.createUser/);
+  assert.match(edgeFunction, /password\.length < 12/);
   assert.match(authHelper, /client\.auth\.getUser\(token\)/);
   assert.match(authHelper, /profile\?\.role !== 'super_admin'/);
   assert.match(authHelper, /profile\.is_active !== true/);
@@ -53,8 +55,22 @@ test('admin lifecycle actions are handled by the Super-Admin-only Edge Function'
   assert.match(dashboard, /supabase\.functions\.invoke[^]*manage-department-admin/);
   assert.match(management, /authorizeSuperAdmin\(request\)/);
   assert.match(management, /client\.auth\.admin\.updateUserById/);
+  assert.match(management, /action === 'reset-password'/);
+  assert.match(management, /password\.length < 12/);
   assert.match(management, /client\.auth\.admin\.deleteUser/);
   assert.doesNotMatch(upgrade, /insert into auth\.identities/i);
+});
+
+test('Super Admin can inspect per-admin events and reset passwords from the dashboard', () => {
+  const dashboard = read('src', 'pages', 'AdminDashboard.tsx');
+
+  assert.match(dashboard, /eventsByAdmin\.get\(profile\.id\)/);
+  assert.match(dashboard, /is_published/);
+  assert.match(dashboard, /is_download_enabled/);
+  assert.match(dashboard, /Event visibility and download status/);
+  assert.match(dashboard, /handleResetAdminPassword/);
+  assert.match(dashboard, /manageAdminAccess\('reset-password'/);
+  assert.match(dashboard, /handleRemoveAdmin/);
 });
 
 test('certificate lookup is server mediated and public QR responses filter private fields', () => {

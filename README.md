@@ -68,7 +68,7 @@ The page components load with the app shell for immediate route navigation; larg
 The browser uses three Supabase Edge Functions; account changes and public certificate lookups do not write/read certificate or Auth internals directly:
 
 - `create-department-admin` creates the Auth account with Supabase's Auth Admin API, then creates its active `admin_profiles` row. If profile creation fails, it removes the incomplete Auth account.
-- `manage-department-admin` suspends, restores, or removes department-admin accounts. Removal transfers that admin's event and certificate ownership to the Super Admin first.
+- `manage-department-admin` suspends, restores, removes, or resets department-admin accounts. Removal transfers that admin's event and certificate ownership to the Super Admin first; password resets require the Super Admin to set a 12-character minimum password and share it out of band.
 - `verify-certificate` performs published-event/verified-certificate lookups and returns only public-safe fields for QR verification. Event downloads require both configured identity fields.
 
 Deploy these exact function sources to the same Supabase project before publishing the frontend:
@@ -78,6 +78,8 @@ Deploy these exact function sources to the same Supabase project before publishi
 3. Verify the existing Super Admin profile still has `role = 'super_admin'` and `is_active = true`.
 4. In one coordinated maintenance window, run `supabase/upgrade_existing.sql` in the Supabase SQL Editor and push the frontend to `main` immediately afterward. The SQL removes direct certificate access and old admin RPCs, so the currently published frontend must be replaced promptly; do not run old SQL snippets/RPCs.
 5. Verify the GitHub Pages workflow succeeds. Test Super Admin creation of a department admin, department-admin sign-in, event creation, certificate issuance, QR verification, and candidate download.
+
+The Super Admin dashboard lists existing department-admin profiles, shows each admin's events and whether each is public, draft, downloads-enabled, or paused, and provides per-admin password reset, suspend/restore, and permanent removal actions. Existing profiles are included whether active or suspended. Events without an owner ID cannot be attributed to a specific admin and are not included in an individual's event count.
 
 Supabase supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the server-side function runtime. Never add the service-role key to GitHub Pages environment variables, `.env`, or frontend code.
 

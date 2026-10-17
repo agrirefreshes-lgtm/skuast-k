@@ -25,6 +25,8 @@ export interface PromptField {
   placeholder?: string;
   defaultValue?: string;
   required?: boolean;
+  inputType?: 'text' | 'password';
+  minLength?: number;
 }
 
 export interface PromptOptions {
@@ -122,9 +124,11 @@ export const PromptProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                   </label>
                   <input
                     id={`prompt-${f.key}`}
-                    type="text"
+                    type={f.inputType || 'text'}
                     autoFocus={f === options.fields[0]}
                     placeholder={f.placeholder}
+                    required={f.required}
+                    minLength={f.minLength}
                     value={values[f.key]}
                     onChange={(e) =>
                       setValues((prev) => ({ ...prev, [f.key]: e.target.value }))

@@ -41,7 +41,8 @@ import {
   Lock,
   Unlock,
   Ban,
-  RotateCcw
+  RotateCcw,
+  RefreshCw
 } from 'lucide-react';
 
 interface AdminProfile {
@@ -51,12 +52,23 @@ interface AdminProfile {
   department: string;
   is_active?: boolean;
   created_at?: string;
+  events?: AdminEventSummary[];
+}
+
+interface AdminEventSummary {
+  id: string;
+  name: string;
+  slug: string;
+  is_published: boolean;
+  is_download_enabled: boolean;
 }
 
 export const AdminDashboard: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [userProfile, setUserProfile] = useState<AdminProfile | null>(null);
   const [adminList, setAdminList] = useState<AdminProfile[]>([]);
+  const [expandedAdminId, setExpandedAdminId] = useState<string | null>(null);
+  const [unassignedEventCount, setUnassignedEventCount] = useState(0);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [certificates, setCertificates] = useState<IssuedCertificate[]>([]);
@@ -89,16 +101,51 @@ export const AdminDashboard: React.FC = () => {
 
   const loadAdminDirectory = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('admin_profiles')
-      .select('*')
-      .order('created_at', { ascending: false });
+    try {
+      const [profilesResult, eventsResult] = await Promise.all([
+        supabase
+          .from('admin_profiles')
+          .select('id, email, role, department, is_active, created_at')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('events')
+          .select('id, name, slug, is_published, is_download_enabled, created_by')
+          .order('created_at', { ascending: false }),
+      ]);
+      if (profilesResult.error) throw profilesResult.error;
+      if (eventsResult.error) throw eventsResult.error;
 
-    if (!error && data) {
-      setAdminList(data);
+      const eventsByAdmin = new Map<string, AdminEventSummary[]>();
+      let unassignedEvents = 0;
+      for (const event of eventsResult.data ?? []) {
+        if (!event.created_by) {
+          unassignedEvents += 1;
+          continue;
+        }
+        const adminEvents = eventsByAdmin.get(event.created_by) ?? [];
+        adminEvents.push({
+          id: event.id,
+          name: event.name,
+          slug: event.slug,
+          is_published: event.is_published,
+          is_download_enabled: event.is_download_enabled,
+        });
+        eventsByAdmin.set(event.created_by, adminEvents);
+      }
+      setAdminList((profilesResult.data ?? []).map((profile) => ({
+        ...profile,
+        events: eventsByAdmin.get(profile.id) ?? [],
+      })));
+      setUnassignedEventCount(unassignedEvents);
+    } catch (error: unknown) {
+      toast.error(
+        'Could not load administration overview',
+        error instanceof Error ? error.message : 'Please retry loading the admin dashboard.',
+      );
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, []);
+  }, [toast]);
 
   const loadEvents = useCallback(async () => {
     setLoading(true);
@@ -443,12 +490,13 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const manageAdminAccess = async (
-    action: 'suspend' | 'restore' | 'remove',
+    action: 'suspend' | 'restore' | 'remove' | 'reset-password',
     adminId: string,
+    password?: string,
   ): Promise<void> => {
     const { data, error } = await supabase.functions.invoke<unknown>(
       'manage-department-admin',
-      { body: { action, adminId } },
+      { body: { action, adminId, ...(password === undefined ? {} : { password }) } },
     );
     if (error) {
       if (error instanceof FunctionsHttpError && error.context instanceof Response) {
@@ -520,7 +568,7 @@ export const AdminDashboard: React.FC = () => {
     if (!adm.id) return;
     const ok = await confirm({
       title: 'Remove department admin?',
-      message: `${adm.email} will lose admin access permanently — their login account and admin record are deleted. Events and certificates they created stay safe.`,
+      message: `${adm.email}'s login and admin profile will be permanently deleted. Their ${adm.events?.length ?? 0} event(s) and certificates will be retained and transferred to you for oversight.`,
       confirmText: 'Remove admin',
       danger: true,
     });
@@ -545,7 +593,53 @@ export const AdminDashboard: React.FC = () => {
     await loadAdminDirectory();
   };
 
-    const handleCreateEvent = async () => {
+  const handleResetAdminPassword = async (adm: AdminProfile) => {
+    if (!adm.id) return;
+    const values = await prompt({
+      title: 'Reset department-admin password',
+      message: `Set a new password for ${adm.email}. Share it with them through a separate secure channel.`,
+      fields: [
+        {
+          key: 'password',
+          label: 'New password (12+ characters)',
+          required: true,
+          inputType: 'password',
+          minLength: 12,
+        },
+        {
+          key: 'confirmPassword',
+          label: 'Confirm new password',
+          required: true,
+          inputType: 'password',
+          minLength: 12,
+        },
+      ],
+      confirmText: 'Reset password',
+    });
+    if (!values) return;
+    if (values.password !== values.confirmPassword) {
+      toast.error('Passwords do not match', 'Enter the same password in both fields.');
+      return;
+    }
+
+    setAdminActionId(adm.id);
+    try {
+      await manageAdminAccess('reset-password', adm.id, values.password);
+      toast.success(
+        'Password reset',
+        `${adm.email}'s password was updated. Share the new password through a secure, separate channel.`,
+      );
+    } catch (error: unknown) {
+      toast.error(
+        'Could not reset password',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    } finally {
+      setAdminActionId(null);
+    }
+  };
+
+  const handleCreateEvent = async () => {
     const userId = await verifyLiveSession();
     if (!userId) return;
 
@@ -1159,6 +1253,7 @@ export const AdminDashboard: React.FC = () => {
                       <input 
                         type="password"
                         required
+                        minLength={12}
                         placeholder="ΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇó"
                         value={newAdminPassword}
                         onChange={(e) => setNewAdminPassword(e.target.value)}
@@ -1176,6 +1271,9 @@ export const AdminDashboard: React.FC = () => {
                     {creatingAdmin ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={16} />}
                     <span>{creatingAdmin ? 'Authorizing & Creating...' : 'Create Department Admin'}</span>
                   </button>
+                  <p className="text-[10px] text-slate-500">
+                    Use a unique password with at least 12 characters. Share credentials privately.
+                  </p>
                 </form>
               </div>
 
@@ -1189,6 +1287,20 @@ export const AdminDashboard: React.FC = () => {
                   <span className="text-xs bg-slate-100 px-3 py-1 rounded-full font-bold text-slate-700 border">
                     {adminList.filter((a) => a.is_active !== false).length} Active · {adminList.length} Total
                   </span>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[11px] text-slate-500">
+                    Includes existing suspended accounts. Events without an assigned owner: {unassignedEventCount}.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void loadAdminDirectory()}
+                    disabled={loading}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+                    Refresh overview
+                  </button>
                 </div>
 
                 {loading ? (
@@ -1204,6 +1316,7 @@ export const AdminDashboard: React.FC = () => {
                         <tr className="border-b bg-slate-50 text-slate-600">
                           <th className="py-2.5 px-3 rounded-l-lg">Admin Official Email</th>
                           <th className="py-2.5 px-3">Assigned Department</th>
+                          <th className="py-2.5 px-3">Events</th>
                           <th className="py-2.5 px-3">Role Privilege</th>
                           <th className="py-2.5 px-3">Status</th>
                           <th className="py-2.5 px-3 rounded-r-lg">Actions</th>
@@ -1211,9 +1324,34 @@ export const AdminDashboard: React.FC = () => {
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {adminList.map((adm) => (
-                          <tr key={adm.id || adm.email} className="hover:bg-slate-50/80">
+                          <React.Fragment key={adm.id || adm.email}>
+                          <tr className="hover:bg-slate-50/80">
                             <td className="py-3 px-3 font-mono font-semibold text-slate-800">{adm.email}</td>
                             <td className="py-3 px-3 font-medium text-slate-700">{adm.department || 'Central'}</td>
+                            <td className="py-3 px-3">
+                              {(() => {
+                                const adminEvents = adm.events ?? [];
+                                const publicEvents = adminEvents.filter((event) => event.is_published).length;
+                                const pausedEvents = adminEvents.filter((event) => !event.is_download_enabled).length;
+                                const isExpanded = expandedAdminId === adm.id;
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedAdminId(isExpanded ? null : adm.id ?? null)}
+                                    aria-expanded={isExpanded}
+                                    aria-label={`${isExpanded ? 'Hide' : 'View'} ${adminEvents.length} events for ${adm.email}`}
+                                    className="text-left rounded-lg px-2 py-1 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                                  >
+                                    <span className="font-bold text-slate-800">
+                                      {adminEvents.length} {adminEvents.length === 1 ? 'event' : 'events'}
+                                    </span>
+                                    <span className="block text-[10px] text-slate-500">
+                                      {publicEvents} public · {pausedEvents} paused
+                                    </span>
+                                  </button>
+                                );
+                              })()}
+                            </td>
                             <td className="py-3 px-3">
                               <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
                                 adm.role === 'super_admin' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
@@ -1234,11 +1372,26 @@ export const AdminDashboard: React.FC = () => {
                             </td>
                             <td className="py-3 px-3">
                               {adm.role === 'admin' ? (
-                                <div className="flex items-center gap-1">
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <button
+                                    onClick={() => handleResetAdminPassword(adm)}
+                                    disabled={adminActionId === adm.id}
+                                    title="Reset department-admin password"
+                                    aria-label={`Reset password for ${adm.email}`}
+                                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-emerald-800 hover:bg-emerald-50 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                  >
+                                    {adminActionId === adm.id ? (
+                                      <Loader2 size={14} className="animate-spin" />
+                                    ) : (
+                                      <KeyRound size={14} />
+                                    )}
+                                    <span className="hidden xl:inline">Reset password</span>
+                                  </button>
                                   <button
                                     onClick={() => handleToggleAdminAccess(adm)}
                                     disabled={adminActionId === adm.id}
                                     title={adm.is_active === false ? 'Restore admin access' : 'Suspend admin access (temporary)'}
+                                    aria-label={`${adm.is_active === false ? 'Restore' : 'Suspend'} ${adm.email}`}
                                     className={`p-1.5 rounded-lg transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                                       adm.is_active === false
                                         ? 'text-emerald-700 hover:bg-emerald-50'
@@ -1257,6 +1410,7 @@ export const AdminDashboard: React.FC = () => {
                                     onClick={() => handleRemoveAdmin(adm)}
                                     disabled={adminActionId === adm.id}
                                     title="Remove admin permanently"
+                                    aria-label={`Remove ${adm.email}`}
                                     className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                                   >
                                     <Trash2 size={14} />
@@ -1267,6 +1421,57 @@ export const AdminDashboard: React.FC = () => {
                               )}
                             </td>
                           </tr>
+                        {expandedAdminId === adm.id && (
+                          <tr className="bg-slate-50">
+                            <td colSpan={6} className="px-4 py-3">
+                              <h3 className="text-[11px] font-bold uppercase tracking-wide text-slate-600 mb-2">
+                                Event visibility and download status
+                              </h3>
+                              {!adm.events?.length ? (
+                                <p className="text-xs text-slate-500">No events are currently assigned to this admin.</p>
+                              ) : (
+                                <ul className="grid gap-2 sm:grid-cols-2">
+                                  {adm.events.map((event) => (
+                                    <li
+                                      key={event.id}
+                                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3"
+                                    >
+                                      <span className="min-w-0 text-xs font-semibold text-slate-800">
+                                        {event.is_published ? (
+                                          <a
+                                            href={getEventUrl(event.slug)}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="hover:text-emerald-800 hover:underline"
+                                          >
+                                            {event.name}
+                                          </a>
+                                        ) : event.name}
+                                      </span>
+                                      <span className="flex flex-wrap gap-1.5">
+                                        <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                                          event.is_published
+                                            ? 'bg-emerald-50 text-emerald-800'
+                                            : 'bg-slate-100 text-slate-600'
+                                        }`}>
+                                          {event.is_published ? 'Public' : 'Draft · not public'}
+                                        </span>
+                                        <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                                          event.is_download_enabled
+                                            ? 'bg-sky-50 text-sky-800'
+                                            : 'bg-amber-50 text-amber-800'
+                                        }`}>
+                                          {event.is_download_enabled ? 'Downloads enabled' : 'Paused'}
+                                        </span>
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                        </React.Fragment>
                         ))}
                       </tbody>
                     </table>
