@@ -78,8 +78,8 @@ Cache-Control headers set: `no-cache, no-store, must-revalidate`
 - Suspend/restore/remove operations use `supabase/functions/manage-department-admin/index.ts`; removed admins' event and certificate ownership is transferred to the Super Admin before account deletion.
 - Public QR and event-download certificate lookups use `supabase/functions/verify-certificate/index.ts`. Anonymous clients have no direct certificate-table access; QR responses exclude configured private-field markers, and downloads require the event's two identity values.
 - The service-role key is read only from the Edge Function runtime environment and is never included in the browser bundle.
-- On an existing project, back up the project and run `supabase/upgrade_existing.sql` before deploying the frontend. The upgrade removes legacy direct-auth RPCs, revokes anonymous certificate access, and applies event-ownership policies.
-- Deploy all three Edge Functions before publishing the frontend version that invokes them. Keep JWT verification enabled for both admin functions; certificate verification applies its own public-access rules.
+- On an existing project, back up the project, deploy all three Edge Functions, then run `supabase/upgrade_existing.sql` and publish the frontend in one maintenance window. The upgrade removes legacy direct-auth RPCs, revokes anonymous certificate access, and applies event-ownership policies; the old frontend must not remain live after that point.
+- Keep JWT verification enabled for both admin functions; disable gateway JWT verification for public certificate verification so its own published-event and download rules run for anonymous visitors.
 - Admin login uses Supabase Auth email/password and only opens the console when the user has an active `admin` or `super_admin` profile.
 
 ---

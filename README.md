@@ -74,16 +74,16 @@ The browser uses three Supabase Edge Functions; account changes and public certi
 Deploy these exact function sources to the same Supabase project before publishing the frontend:
 
 1. Verify a restorable database and Storage backup exists.
-2. Run `supabase/upgrade_existing.sql` in the Supabase SQL Editor. Do not run old SQL snippets/RPCs from prior deployments.
-3. Deploy `create-department-admin`, `manage-department-admin`, and `verify-certificate` from their matching folders under `supabase/functions/`. Keep JWT verification enabled for the two admin functions; the server code independently verifies the active Super Admin role. Public certificate verification remains a public function and enforces publication/download rules itself.
-4. Verify the existing Super Admin profile still has `role = 'super_admin'` and `is_active = true`.
-5. Push the frontend to `main` and verify the GitHub Pages workflow succeeds. Test Super Admin creation of a department admin, department-admin sign-in, event creation, certificate issuance, QR verification, and candidate download.
+2. Deploy `create-department-admin`, `manage-department-admin`, and `verify-certificate` from their matching folders under `supabase/functions/`. Keep JWT verification enabled for the two admin functions; the server code independently verifies the active Super Admin role. Disable gateway JWT verification for `verify-certificate` so anonymous certificate checks can reach its own publication/download checks.
+3. Verify the existing Super Admin profile still has `role = 'super_admin'` and `is_active = true`.
+4. In one coordinated maintenance window, run `supabase/upgrade_existing.sql` in the Supabase SQL Editor and push the frontend to `main` immediately afterward. The SQL removes direct certificate access and old admin RPCs, so the currently published frontend must be replaced promptly; do not run old SQL snippets/RPCs.
+5. Verify the GitHub Pages workflow succeeds. Test Super Admin creation of a department admin, department-admin sign-in, event creation, certificate issuance, QR verification, and candidate download.
 
 Supabase supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the server-side function runtime. Never add the service-role key to GitHub Pages environment variables, `.env`, or frontend code.
 
 #### Approved data reset
 
-Only perform this after confirming the backup can be restored. Preserve the current Super Admin Auth user and profile. Remove each department admin from the Super Admin dashboard (which transfers their records), delete the events from the dashboard (certificate rows cascade with their event), then delete the old template files from **Storage → templates**. Do not delete users from `auth.users` with SQL or delete the Super Admin. Confirm the resulting admin profile list contains the preserved Super Admin before creating new department admins.
+Only perform this after confirming the backup can be restored and the updated frontend/functions are deployed. Preserve the current Super Admin Auth user and profile. Remove each department admin from the Super Admin dashboard (which transfers their records), delete the events from the dashboard (certificate rows cascade with their event), then delete the old template files from **Storage → templates**. Do not delete users from `auth.users` with SQL or delete the Super Admin. Confirm the resulting admin profile list contains the preserved Super Admin before creating new department admins.
 
 ### Supabase SQL files
 
