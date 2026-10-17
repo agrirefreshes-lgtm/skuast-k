@@ -27,6 +27,8 @@ test('main push is the only documented website deployment command', () => {
   assert.equal(packageJson.scripts.predeploy, undefined);
   assert.equal(packageJson.devDependencies['gh-pages'], undefined);
   assert.match(workflow, /push:\s*\n\s+branches:\s*\[main\]/);
+  assert.match(workflow, /uses:\s*actions\/checkout@v5/);
+  assert.match(workflow, /uses:\s*actions\/setup-node@v5/);
   assert.match(workflow, /node-version:\s*22/);
   assert.ok(workflow.indexOf('run: npm test') < workflow.indexOf('name: Deploy dist/'));
   assert.match(readme, /git push origin main/);
