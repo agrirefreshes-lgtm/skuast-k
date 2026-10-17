@@ -56,7 +56,11 @@ test('PERF-050: Concurrent requests threshold test', async () => {
   assert.ok(successCount >= 2, `Too many concurrent requests failed: ${successCount}/5`);
 });
 
-test('PERF-051: Load is detected and handled gracefully', async () => {
+test('PERF-051: Load is detected and handled gracefully', {
+  skip: process.env.RUN_SUPABASE_LOAD_TESTS !== 'true'
+    ? 'Set RUN_SUPABASE_LOAD_TESTS=true to run the live Supabase load test.'
+    : false,
+}, async () => {
   const { supabase } = await import('../src/lib/supabaseClient.ts');
 
   let totalSuccess = 0;

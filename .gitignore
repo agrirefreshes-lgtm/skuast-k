@@ -32,3 +32,6 @@ dist-ssr
 # Environment files (contain secrets - never commit); keep only the template.
 .env*
 !.env.example
+
+# Supabase CLI project-link and local instance metadata
+supabase/.temp/
