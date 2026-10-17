@@ -25,8 +25,10 @@ test('admin creation uses a guarded Auth Admin API with a strict response contra
   assert.doesNotMatch(dashboard, /SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(schema, /create or replace function public\.create_department_admin/i);
   assert.match(upgrade, /drop function if exists public\.create_department_admin\(text, text, text\)/i);
+  assert.match(upgrade, /drop function if exists public\.create_department_admin\(text, text\)/i);
   assert.match(upgrade, /drop function if exists public\.set_admin_access\(uuid, boolean\)/i);
   assert.match(upgrade, /drop function if exists public\.remove_department_admin\(uuid\)/i);
+  assert.match(upgrade, /from pg_policies\s+where \(schemaname = 'public' and tablename in \('admin_profiles', 'events', 'certificates'\)\)/i);
   assert.match(upgrade, /revoke insert, update, delete on public\.admin_profiles from authenticated/i);
   assert.doesNotMatch(upgrade, /create policy "self update admin_profiles"/i);
 });

@@ -149,6 +149,27 @@ grant select, insert, update, delete on public.certificates to authenticated;
 grant select on storage.objects to anon, authenticated;
 grant insert, update, delete on storage.objects to authenticated;
 
+do $$
+declare
+  policy_record record;
+begin
+  for policy_record in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where (schemaname = 'public' and tablename in ('admin_profiles', 'events', 'certificates'))
+      or (
+        schemaname = 'storage' and tablename = 'objects'
+        and (
+          policyname ilike '%template%'
+          or coalesce(qual, '') ilike '%templates%'
+          or coalesce(with_check, '') ilike '%templates%'
+        )
+      )
+  loop
+    execute format('drop policy %I on %I.%I', policy_record.policyname, policy_record.schemaname, policy_record.tablename);
+  end loop;
+end $$;
+
 drop policy if exists "public read admin_profiles" on public.admin_profiles;
 drop policy if exists "open insert admin_profiles" on public.admin_profiles;
 drop policy if exists "open update admin_profiles" on public.admin_profiles;
