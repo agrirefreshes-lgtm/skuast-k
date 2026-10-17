@@ -63,31 +63,30 @@ create index if not exists idx_certs_event
   on public.certificates (event_id, created_at);
 create index if not exists idx_certs_batch on public.certificates (batch_id);
 -- 4. Row Level Security ON + anon-key compatible policies
--- (App sirf anon key use karta hai, isliye public read + open write.)
+-- (Public certificate/event reads are available through the anon key.
+-- Admin profile writes are never granted to browser roles.)
 alter table public.admin_profiles enable row level security;
 alter table public.events enable row level security;
 alter table public.certificates enable row level security;
 
 -- 4a. TABLE GRANTS (RLS policies ke SAATH ye bhi chahiye — warna 42501
 -- "permission denied for table" aata hai; events par tha isliye wahi chal raha tha)
-grant select on public.admin_profiles to anon;
-grant select, insert, update on public.admin_profiles to authenticated;
+revoke all on public.admin_profiles from anon;
+grant select on public.admin_profiles to authenticated;
+revoke insert, update, delete on public.admin_profiles from authenticated;
 grant select on public.events to anon;
 grant all on public.events to authenticated;
 grant select on public.certificates to anon;
 grant all on public.certificates to authenticated;
 
 drop policy if exists "public read admin_profiles" on public.admin_profiles;
-create policy "public read admin_profiles"
-  on public.admin_profiles for select using (true);
-
 drop policy if exists "open insert admin_profiles" on public.admin_profiles;
-create policy "open insert admin_profiles"
-  on public.admin_profiles for insert with check (true);
-
 drop policy if exists "open update admin_profiles" on public.admin_profiles;
-create policy "open update admin_profiles"
-  on public.admin_profiles for update using (true) with check (true);
+drop policy if exists "authenticated read admin_profiles" on public.admin_profiles;
+create policy "authenticated read admin_profiles"
+  on public.admin_profiles for select
+  to authenticated
+  using (true);
 
 drop policy if exists "public read events" on public.events;
 create policy "public read events"
@@ -140,16 +139,17 @@ grant select on public.certificates to anon;
 grant all on public.certificates to authenticated;
 grant select on public.events to anon;
 grant all on public.events to authenticated;
-grant select on public.admin_profiles to anon;
-grant select, insert, update on public.admin_profiles to authenticated;
+revoke all on public.admin_profiles from anon;
+grant select on public.admin_profiles to authenticated;
+revoke insert, update, delete on public.admin_profiles from authenticated;
 
 -- Verify (sab me rows ya [] aana chahiye, 42501 NAHI):
 -- select * from public.certificates limit 1;
 -- =====================================================================
 
 -- 6. RPC: SuperAdmin → Department Admin create
--- SECURITY DEFINER taaki anon-key se naya auth user + profile ban sake.
--- NOTE: ye open hai; sirf SuperAdmin email se call karo (UI enforce karta hai).
+-- SECURITY DEFINER lets this function create Auth and profile rows;
+-- execution is restricted below and the caller is checked server-side.
 create or replace function public.create_department_admin(
   p_email text,
   p_password text,
@@ -158,17 +158,33 @@ create or replace function public.create_department_admin(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, extensions  -- pgcrypto (gen_salt/crypt) aksar extensions schema me hota hai
+set search_path = pg_catalog, public, extensions
 as $$
 declare
   v_uid uuid;
   v_email text := lower(btrim(p_email));
+  v_department text := coalesce(nullif(btrim(p_department), ''), 'Academic Department');
 begin
-  if v_email is null or v_email = '' then
-    raise exception 'Email required';
+  if auth.uid() is null or not exists (
+    select 1
+    from public.admin_profiles ap
+    where ap.id = auth.uid()
+      and ap.role = 'super_admin'
+      and ap.is_active = true
+  ) then
+    raise exception 'Only an active Super Admin can create department admins';
+  end if;
+
+  if v_email is null
+     or length(v_email) > 254
+     or v_email !~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' then
+    raise exception 'A valid email address is required';
   end if;
   if p_password is null or char_length(p_password) < 6 then
     raise exception 'Password min 6 chars required';
+  end if;
+  if char_length(v_department) > 160 then
+    raise exception 'Department name must be 160 characters or fewer';
   end if;
 
   -- Clear error agar login account pehle se exist karta hai
@@ -179,17 +195,18 @@ begin
   -- auth.users me naya login create
   v_uid := gen_random_uuid();
   insert into auth.users (
-    id, instance_id, email, encrypted_password,
+    id, instance_id, aud, email, encrypted_password,
     email_confirmed_at, created_at, updated_at,
     raw_app_meta_data, raw_user_meta_data,
     is_super_admin, role
   ) values (
     v_uid, '00000000-0000-0000-0000-000000000000',
+    'authenticated',
     v_email,
-    crypt(p_password, gen_salt('bf')),
+    crypt(p_password, gen_salt('bf', 10)),
     now(), now(), now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
-    '{}'::jsonb, false, 'authenticated'
+    jsonb_build_object('department', v_department), false, 'authenticated'
   );
 
   -- ZAROORI: auth.identities row. Bina iske Supabase Auth (GoTrue) password
@@ -197,19 +214,16 @@ begin
   -- hone ke bawajood, kyunki login identity table se hi lookup hota hai.
   insert into auth.identities (
     provider_id, user_id, identity_data, provider,
-    last_sign_in_at, created_at, updated_at
+    created_at, updated_at
   ) values (
     v_uid::text, v_uid,
     jsonb_build_object('sub', v_uid::text, 'email', v_email, 'email_verified', true),
-    'email', now(), now(), now()
+    'email', now(), now()
   );
 
   -- admin_profiles row (role = admin, is_active default true)
-  insert into public.admin_profiles (id, email, role, department)
-  values (v_uid, v_email, 'admin', coalesce(nullif(btrim(p_department), ''), 'Academic Department'))
-  on conflict (id) do update
-    set email = excluded.email,
-        department = excluded.department;
+  insert into public.admin_profiles (id, email, role, department, is_active)
+  values (v_uid, v_email, 'admin', v_department, true);
 
   return jsonb_build_object('id', v_uid, 'email', v_email);
 end;
@@ -226,17 +240,16 @@ create or replace function public.set_admin_access(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, extensions
+set search_path = pg_catalog, public, extensions
 as $$
 declare
   v_caller uuid := auth.uid();
   v_is_super boolean;
 begin
-  -- Server-side guard: sirf super_admin (ya superadmin-pattern email) chala sake
-  v_is_super := coalesce(
-    (select role = 'super_admin' from public.admin_profiles where id = v_caller),
-    false
-  ) or coalesce(auth.jwt() ->> 'email', '') ilike '%superadmin%';
+  v_is_super := v_caller is not null and exists (
+    select 1 from public.admin_profiles
+    where id = v_caller and role = 'super_admin' and is_active = true
+  );
 
   if not v_is_super then
     raise exception 'Only the Super Admin can change admin access';
@@ -276,17 +289,17 @@ create or replace function public.remove_department_admin(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, extensions
+set search_path = pg_catalog, public, extensions
 as $$
 declare
   v_caller uuid := auth.uid();
   v_is_super boolean;
   v_email text;
 begin
-  v_is_super := coalesce(
-    (select role = 'super_admin' from public.admin_profiles where id = v_caller),
-    false
-  ) or coalesce(auth.jwt() ->> 'email', '') ilike '%superadmin%';
+  v_is_super := v_caller is not null and exists (
+    select 1 from public.admin_profiles
+    where id = v_caller and role = 'super_admin' and is_active = true
+  );
 
   if not v_is_super then
     raise exception 'Only the Super Admin can remove admin accounts';
@@ -319,6 +332,14 @@ begin
   return jsonb_build_object('id', p_admin_id, 'email', v_email, 'removed', true);
 end;
 $$;
+
+-- SECURITY DEFINER admin RPCs must not be executable by anon or PUBLIC.
+revoke all on function public.create_department_admin(text, text, text) from public, anon, authenticated;
+revoke all on function public.set_admin_access(uuid, boolean) from public, anon, authenticated;
+revoke all on function public.remove_department_admin(uuid) from public, anon, authenticated;
+grant execute on function public.create_department_admin(text, text, text) to authenticated;
+grant execute on function public.set_admin_access(uuid, boolean) to authenticated;
+grant execute on function public.remove_department_admin(uuid) to authenticated;
 
 -- 7. Pehla SuperAdmin kaise banayein (MANUAL, SQL me ek baar):
 -- Step A: App me nahi — Supabase Dashboard → Authentication → Users

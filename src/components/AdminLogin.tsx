@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabaseClient';
 import { Lock, Mail, ShieldAlert, Building2, Loader2 } from 'lucide-react';
 
 interface Props {
-  onAuthenticated: (session: any) => void;
+  onAuthenticated: (session: Session) => void;
 }
 
 export const AdminLogin: React.FC<Props> = ({ onAuthenticated }) => {
@@ -14,7 +15,7 @@ export const AdminLogin: React.FC<Props> = ({ onAuthenticated }) => {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !password.trim()) return;
+    if (!email.trim() || !password) return;
 
     setLoading(true);
     setErrorMsg('');
@@ -22,7 +23,7 @@ export const AdminLogin: React.FC<Props> = ({ onAuthenticated }) => {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
-        password: password.trim(),
+        password,
       });
 
       if (error) {
@@ -30,15 +31,15 @@ export const AdminLogin: React.FC<Props> = ({ onAuthenticated }) => {
       }
 
       if (data?.session) {
-        // Session token is securely stored by Supabase Auth client (httpOnly cookie)
-        // No need for client-side session storage for security
+        // Supabase Auth manages session persistence; do not store tokens manually.
         onAuthenticated(data.session);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Authentication error. Please try again.';
       setErrorMsg(
-        err.message?.includes('Invalid login credentials')
+        message.includes('Invalid login credentials')
           ? 'Invalid University Email or Password!'
-          : err.message || 'Authentication error. Please try again.'
+          : message
       );
     } finally {
       setLoading(false);

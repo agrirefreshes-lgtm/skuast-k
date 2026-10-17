@@ -16,7 +16,7 @@
 
 ### 2. **SessionStorage Usage** ✅ FIXED
 **Issue:** AdminLogin.tsx used sessionStorage for session state.
-**Fix:** Removed sessionStorage; Supabase Auth manages tokens via httpOnly cookies.
+**Fix:** Removed manual session storage; Supabase Auth manages browser session persistence.
 
 ---
 
@@ -72,6 +72,17 @@ Cache-Control headers set: `no-cache, no-store, must-revalidate`
 ### 10. **RBAC** ✅ IMPLEMENTED
 **Database Roles:** super_admin, admin
 **RLS Policies:** Enabled on all tables
+
+---
+
+### 11. **Department Admin Login & Creation**
+- Dashboard creation uses the existing `create_department_admin` database RPC; no service-role key is shipped to the browser.
+- On an existing project, run `supabase/fix_admin_access.sql` in the Supabase SQL Editor to install the guarded RPC and restrict its execute permission to authenticated callers.
+- The upgrade script repairs missing email identity rows for department admins. It does not reset passwords or repair incorrect password hashes.
+- Admin login uses Supabase Auth email/password and only opens the console when the user has an active `admin` or `super_admin` profile.
+- If `create-department-admin` was deployed separately in Supabase, remove it from Dashboard → Edge Functions (or with the Supabase CLI) after deploying this RPC-only frontend.
+
+**Limitation:** The existing RPC writes to Supabase Auth's internal tables. This preserves the requested SQL-RPC architecture, but Supabase's supported Auth Admin API is more resilient to internal schema changes.
 
 ---
 

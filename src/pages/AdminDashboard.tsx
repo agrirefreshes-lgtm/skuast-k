@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
 import type { EventItem, IssuedCertificate, UploadedBatch, UploadedColumnDefinition } from '../types/certificate';
 import { ExcelUploader } from '../components/ExcelUploader';
@@ -158,24 +159,28 @@ export const AdminDashboard: React.FC = () => {
     }
   }, []);
 
-  // Load profile + events from a verified session
-  // Returns false sirf jab iska access suspend ho — caller tab isAuthenticated true NA kare
-  const loadProfile = async (session: any): Promise<boolean> => {
-    console.log('loadProfile called, session.user.id:', session.user?.id);
+  // Load profile + events from a verified session; only registered admins proceed.
+  const loadProfile = async (session: Session): Promise<boolean> => {
     try {
-      const { data: profile } = await supabase
+      const { data: profile, error } = await supabase
         .from('admin_profiles')
         .select('id, email, role, department, is_active')
         .eq('id', session.user.id)
         .maybeSingle();
 
-      if (!profile) {
-        console.warn('loadProfile: no admin_profiles row found, using defaults. user:', session.user?.email);
+      if (error) {
+        throw error;
       }
 
-      // Access control: SuperAdmin ne is account ka access temporarily suspend kar diya
-      if (profile && profile.is_active === false) {
-        console.warn('loadProfile: access suspended for user:', profile.email);
+      if (!profile || (profile.role !== 'admin' && profile.role !== 'super_admin')) {
+        await supabase.auth.signOut();
+        setIsAuthenticated(false);
+        setUserProfile(null);
+        toast.error('Admin access required', 'This account is not registered as an administrator.');
+        return false;
+      }
+
+      if (profile.is_active === false) {
         await supabase.auth.signOut();
         setIsAuthenticated(false);
         setUserProfile(null);
@@ -186,17 +191,14 @@ export const AdminDashboard: React.FC = () => {
         return false;
       }
 
-      const userEmail = session.user.email?.toLowerCase() || '';
-      const isSuper = profile?.role === 'super_admin' || userEmail.includes('superadmin');
-
+      const isSuper = profile.role === 'super_admin';
       const resolvedProfile: AdminProfile = {
         id: session.user.id,
-        email: session.user.email || 'Admin',
-        role: isSuper ? 'super_admin' : (profile?.role || 'event_admin'),
-        department: isSuper ? 'Central Administration' : (profile?.department || 'Academic Department')
+        email: profile.email || session.user.email || 'Admin',
+        role: profile.role,
+        department: isSuper ? 'Central Administration' : (profile.department || 'Academic Department')
       };
 
-      console.log('loadProfile: resolved profile, role:', resolvedProfile.role);
       setUserProfile(resolvedProfile);
 
       if (resolvedProfile.role === 'super_admin') {
@@ -204,13 +206,17 @@ export const AdminDashboard: React.FC = () => {
       } else {
         await loadEvents();
       }
-      console.log('loadProfile: data loaded successfully');
       return true;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('loadProfile ERROR:', err);
-      toast.error('Could not load admin profile', err?.message || 'Please try again.');
-      // Original behavior: error par bhi console default profile ke saath khulta hai
-      return true;
+      toast.error(
+        'Could not load admin profile',
+        err instanceof Error ? err.message : 'Please try again.'
+      );
+      await supabase.auth.signOut();
+      setIsAuthenticated(false);
+      setUserProfile(null);
+      return false;
     } finally {
       // Always clear loading so the console can render (never leave the UI stuck).
       setLoading(false);
@@ -225,15 +231,12 @@ export const AdminDashboard: React.FC = () => {
         const { data: { session } } = await supabase.auth.getSession();
 
         if (!session?.user) {
-          console.log('checkExistingSession: no active session found');
           setIsAuthenticated(false);
           setLoading(false);
           return;
         }
 
-        console.log('checkExistingSession: session found for user:', session.user.email);
         const profileOk = await loadProfile(session);
-        console.log('checkExistingSession: auth complete, dashboard ready');
         // Only set isAuthenticated after successful profile load
         setIsAuthenticated(profileOk);
       } catch (err: any) {
@@ -263,7 +266,7 @@ export const AdminDashboard: React.FC = () => {
     setAdminList([]);
   };
 
-  const handleLoginSuccess = async (session?: any) => {
+  const handleLoginSuccess = async (session?: Session) => {
     setLoading(true);
     try {
       let sessionToUse = session;
@@ -278,14 +281,11 @@ export const AdminDashboard: React.FC = () => {
         sessionToUse = fetchedSession;
       }
 
-      console.log('handleLoginSuccess: session found, loading profile...');
-      
       // Load profile FIRST, then set isAuthenticated
       const profileOk = await loadProfile(sessionToUse);
       
       // Only set isAuthenticated after successful profile load
       setIsAuthenticated(profileOk);
-      console.log('handleLoginSuccess: auth complete, dashboard ready for user:', sessionToUse.user?.email);
     } catch (err: any) {
       setLoading(false);
       console.error('LOGIN ERROR:', err);
@@ -350,101 +350,34 @@ export const AdminDashboard: React.FC = () => {
       ? `${msg} — Database fix pending: Supabase SQL Editor me supabase/fix_admin_access.sql chalayein.`
       : msg;
 
-  // Edge Function ki error body se server ka message nikalo
-  // (FunctionsHttpError ka `context` ek Response hota hai)
-  const extractFunctionError = async (fnError: unknown): Promise<string | null> => {
-    if (!fnError) return null;
-    const anyErr = fnError as { message?: string; context?: unknown };
-    const ctx = anyErr.context as { status?: number; json?: () => Promise<unknown> } | null;
-    if (ctx && typeof ctx.json === 'function') {
-      try {
-        const payload = (await ctx.json()) as { error?: unknown };
-        if (typeof payload?.error === 'string' && payload.error) {
-          return payload.error;
-        }
-      } catch {
-        /* JSON parse fail → neeche generic message */
-      }
-    }
-    if (typeof anyErr.message === 'string' && anyErr.message) return anyErr.message;
-    return 'Please try again.';
-  };
-
-  // Edge Function deploy nahi hui ho to RPC fallback — sirf is case me fallback
-  const isMissingFunction = (fnError: unknown, msg: string | null): boolean => {
-    const status = (fnError as { context?: { status?: number } } | null)?.context?.status;
-    if (status === 404) return true;
-    return !!msg && /not found|Failed to fetch|Failed to send a request/i.test(msg);
-  };
-
   const handleCreateDepartmentAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreatingAdmin(true);
 
     try {
-      // PRIMARY: Edge Function `create-department-admin` — official Auth Admin
-      // API se banana (hashing + identities server-side, login turant ready).
-      // Agar function abhi deploy nahi hui to legacy RPC path use hota hai.
-      let createError: string | null = null;
-      let usedEdge = false;
+      const { data, error } = await supabase.rpc('create_department_admin', {
+        p_email: newAdminEmail.trim().toLowerCase(),
+        p_password: newAdminPassword,
+        p_department: newAdminDept.trim()
+      });
 
-      try {
-        const { data, error: fnError } = await supabase.functions.invoke(
-          'create-department-admin',
-          {
-            body: {
-              email: newAdminEmail.trim().toLowerCase(),
-              password: newAdminPassword.trim(),
-              department: newAdminDept.trim(),
-            },
-          }
-        );
-        if (fnError) {
-          const msg = await extractFunctionError(fnError);
-          if (isMissingFunction(fnError, msg)) {
-            usedEdge = false; // function abhi deploy nahi — neeche RPC fallback
-          } else {
-            createError = msg || 'Please try again.';
-          }
-        } else if (!data || !(data as { id?: string }).id) {
-          createError = 'Could not create the login account. Please try again.';
-          usedEdge = false;
-        } else {
-          usedEdge = true;
-        }
-      } catch (e: any) {
-        const msg = String(e?.message || e || '');
-        if (isMissingFunction(e, msg)) {
-          usedEdge = false; // network/fetch failure — neeche RPC fallback
-        } else {
-          createError = msg || 'Please try again.';
-        }
+      if (error) {
+        throw new Error(sqlFixHint(error.message || 'Please check the details and try again.'));
       }
 
-      if (!createError && !usedEdge) {
-        // LEGACY fallback: purana RPC path (fix_admin_access.sql apply hona chahiye)
-        const { error } = await supabase.rpc('create_department_admin', {
-          p_email: newAdminEmail.trim().toLowerCase(),
-          p_password: newAdminPassword.trim(),
-          p_department: newAdminDept.trim()
-        });
-
-        if (error) {
-          createError = sqlFixHint(error.message || 'Please check the details and try again.');
-        }
+      if (!data || typeof data !== 'object' || typeof data.id !== 'string') {
+        throw new Error('The database did not confirm the admin account was created. Please check the admin directory before retrying.');
       }
-
-      if (createError) throw new Error(createError);
 
       toast.success('Department admin created', `Access granted to ${newAdminEmail}. They can now sign in from the Admin tab.`);
       setNewAdminEmail('');
       setNewAdminPassword('');
       setNewAdminDept('');
       await loadAdminDirectory();
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.error(
         'Could not create department admin',
-        sqlFixHint(err.message || 'Please check the details and try again.')
+        sqlFixHint(err instanceof Error ? err.message : 'Please check the details and try again.')
       );
     } finally {
       setCreatingAdmin(false);

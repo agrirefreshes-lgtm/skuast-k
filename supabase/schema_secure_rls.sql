@@ -74,7 +74,9 @@ revoke insert, update, delete on public.certificates from anon;
 -- ---------------------------------------------------------------------
 -- 3. ADMIN_PROFILES  (most sensitive — was fully open before)
 --    Public: NO access (hide admin emails/roles).
---    Admin: read all profiles; update ONLY their own row (no promotion).
+--    Authenticated users: read profiles for the admin directory.
+--    Profile writes are server/database-only; a self-update policy would
+--    still let users change their own role.
 --    Inserts happen via the SECURITY DEFINER RPC / manual SQL -> no policy.
 -- ---------------------------------------------------------------------
 drop policy if exists "public read admin_profiles" on public.admin_profiles;
@@ -88,13 +90,9 @@ create policy "authenticated read admin_profiles"
   to authenticated
   using (true);
 
-create policy "self update admin_profiles"
-  on public.admin_profiles for update
-  to authenticated
-  using (auth.uid() = id)                 -- can only touch your own row
-  with check (auth.uid() = id);
-
-revoke insert, update, delete on public.admin_profiles from anon;
+revoke all on public.admin_profiles from anon;
+revoke insert, update, delete on public.admin_profiles from authenticated;
+grant select on public.admin_profiles to authenticated;
 
 -- ---------------------------------------------------------------------
 -- 4. STORAGE — templates bucket
